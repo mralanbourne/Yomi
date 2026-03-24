@@ -1,9 +1,9 @@
 require('dotenv').config();
 const express = require('express');
-const path = require('path');
 const axios = require('axios');
+const path = require('path');
 const { getRouter } = require('stremio-addon-sdk');
-const { addonInterface, manifest, parseConfig } = require('./addon');
+const { addonInterface } = require('./addon');
 
 const app = express();
 const port = process.env.PORT || 7000;
@@ -12,24 +12,57 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'static')));
 app.get('/health', (req, res) => res.status(200).json({ status: 'alive' }));
 app.get('/configure', (req, res) => res.redirect('/'));
-app.use('/', getRouter(addonInterface));
+
+// SMART SELECTOR: Erkennt Episoden in Torrent-Batches
+function selectBestFile(files, requestedEp) {
+    if (!files || !files.length) return null;
+    const epNum = parseInt(requestedEp);
+    const epPadded = epNum < 10 ? `0${epNum}` : `${epNum}`;
+    
+    // Regex für: E02, Ep.2, 02, [02], Folge 2
+    const epRegex = new RegExp(`[EePp._\\s\\-\\[]${epNum}\\b|[Ee]pisode\\s*${epNum}\\b|\\b${epPadded}\\b`, 'i');
+
+    const videoFiles = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name || f.path || ""));
+    
+    // 1. Priorität: Exakter Episoden-Match
+    const matches = videoFiles.filter(f => epRegex.test(f.name || f.path || ""));
+    if (matches.length > 0) {
+        return matches.sort((a, b) => (b.size || b.bytes || 0) - (a.size || a.bytes || 0))[0];
+    }
+
+    // 2. Priorität: Größte Videodatei (Fallback für Movies)
+    return videoFiles.sort((a, b) => (b.size || b.bytes || 0) - (a.size || a.bytes || 0))[0];
+}
+
+// SUBTITLE PROXY: Lädt Untertitel aus der Cloud und serviert sie an Stremio
+app.get('/sub/:provider/:apiKey/:hash/:fileId', async (req, res) => {
+    const { provider, apiKey, hash, fileId } = req.params;
+    try {
+        if (provider === "realdebrid") {
+            const list = await axios.get('https://api.real-debrid.com/rest/1.0/torrents', { headers: { Authorization: `Bearer ${apiKey}` } });
+            const torrent = list.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
+            if (torrent) {
+                const info = await axios.get(`https://api.real-debrid.com/rest/1.0/torrents/info/${torrent.id}`, { headers: { Authorization: `Bearer ${apiKey}` } });
+                const fileIdx = info.data.files.findIndex(f => f.id == fileId);
+                const unrestrict = await axios.post('https://api.real-debrid.com/rest/1.0/unrestrict/link', new URLSearchParams({ link: info.data.links[fileIdx] }), { headers: { Authorization: `Bearer ${apiKey}` } });
+                const subData = await axios.get(unrestrict.data.download, { responseType: 'arraybuffer' });
+                res.set('Content-Type', 'text/plain');
+                return res.send(subData.data);
+            }
+        }
+        if (provider === "torbox") {
+            const dl = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&hash=${hash}&file_id=${fileId}`);
+            const subData = await axios.get(dl.data.data, { responseType: 'arraybuffer' });
+            res.set('Content-Type', 'text/plain');
+            return res.send(subData.data);
+        }
+        res.status(404).send("Not found");
+    } catch (e) { res.status(500).send("Proxy Error"); }
+});
 
 function serveLoadingVideo(req, res) {
     const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
     res.redirect(`${protocol}://${req.headers.host}/waiting.mp4`);
-}
-
-function selectBestFile(files, requestedEp) {
-    if (!files || !files.length) return 0;
-    const epNum = parseInt(requestedEp);
-    const epPadded = epNum < 10 ? `0${epNum}` : `${epNum}`;
-    const epRegex = new RegExp(`[EePp._\\s]${epNum}\\b|[Ee]pisode\\s*${epNum}\\b|\\b${epPadded}\\b`, 'i');
-
-    const videoMatches = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name || f.path || "") && epRegex.test(f.name || f.path || ""));
-    if (videoMatches.length > 0) return videoMatches.sort((a, b) => (b.size || b.bytes || 0) - (a.size || a.bytes || 0))[0].id;
-    
-    const biggest = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name || f.path || "")).sort((a, b) => (b.size || b.bytes || 0) - (a.size || a.bytes || 0))[0];
-    return biggest ? biggest.id : (files[0].id || 0);
 }
 
 app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
@@ -48,8 +81,8 @@ app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
             const info = await axios.get(`https://api.real-debrid.com/rest/1.0/torrents/info/${torrent.id}`, { headers: { Authorization: `Bearer ${apiKey}` } });
             if (info.data.status !== "downloaded") {
                 if (info.data.status === "waiting_files_selection") {
-                    const fileId = selectBestFile(info.data.files, requestedEp);
-                    await axios.post(`https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${torrent.id}`, new URLSearchParams({ files: fileId }), { headers: { Authorization: `Bearer ${apiKey}` } });
+                    const bestFile = selectBestFile(info.data.files, requestedEp);
+                    await axios.post('https://api.real-debrid.com/rest/1.0/torrents/selectFiles/' + torrent.id, new URLSearchParams({ files: bestFile ? bestFile.id : info.data.files[0].id }), { headers: { Authorization: `Bearer ${apiKey}` } });
                 }
                 return serveLoadingVideo(req, res);
             }
@@ -68,11 +101,12 @@ app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
                 return serveLoadingVideo(req, res);
             }
             if (torrent.download_state !== "completed" && torrent.download_state !== "cached") return serveLoadingVideo(req, res);
-            const fileId = selectBestFile(torrent.files, requestedEp);
-            const dl = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&torrent_id=${torrent.id}&file_id=${fileId}`);
+            const bestFile = selectBestFile(torrent.files, requestedEp);
+            const dl = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&torrent_id=${torrent.id}&file_id=${bestFile ? bestFile.id : 0}`);
             return res.redirect(dl.data.data);
         }
     } catch (e) { return serveLoadingVideo(req, res); }
 });
 
+app.use('/', getRouter(addonInterface));
 app.listen(port, () => console.log(`YOMI ONLINE | PORT ${port}`));
