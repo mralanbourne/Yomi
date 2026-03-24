@@ -3,7 +3,7 @@ const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime 
 const { searchSukebeiForHentai, cleanTorrentTitle } = require('./lib/sukebei');
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/debrid');
 
-// predefine the catalogs here, but they will be dynamically filtered by server.js later
+// predefine the catalogs here, but they will be dynamically filtered by server.js
 const manifest = {
     id: "org.community.yomi",
     version: "1.0.0",
@@ -69,7 +69,7 @@ function extractTags(title) {
     return { res, lang };
 }
 
-// CATALOG HANDLER
+// --- CATALOG HANDLER ---
 builder.defineCatalogHandler(async ({ id, extra }) => {
     
     if (id === "sukebei_trending") {
@@ -120,12 +120,18 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
                 });
             }
         }
-        return { metas: finalMetas, cacheMaxAge: 604800 };
+        
+        // SMART CACHE:
+        // if result is empty (e.G. Sukebei Timeout), only cache for a minute
+        // if results are there, cache for 24H (86400)
+        const cacheAge = finalMetas.length === 0 ? 60 : 86400;
+        
+        return { metas: finalMetas, cacheMaxAge: cacheAge };
     }
     return { metas: [] };
 });
 
-// META HANDLER
+// --- META HANDLER ---
 builder.defineMetaHandler(async ({ id }) => {
     if (id.startsWith('anilist:')) {
         const anilistId = id.split(':')[1]; 
@@ -152,7 +158,7 @@ builder.defineMetaHandler(async ({ id }) => {
     return { meta: { id: id, type: "movie", name: "Not found" } }; 
 });
 
-// STREAM HANDLER
+// --- STREAM HANDLER ---
 builder.defineStreamHandler(async ({ id, config }) => {
     const userConfig = parseConfig(config);
     if (!userConfig.rdKey && !userConfig.tbKey) return { streams: [] };
@@ -172,7 +178,9 @@ builder.defineStreamHandler(async ({ id, config }) => {
         }
 
         const torrents = await searchSukebeiForHentai(searchTitle);
-        if (torrents.length === 0) return { streams: [], cacheMaxAge: 3600 };
+        
+        // SMART CACHE for Streams
+        if (torrents.length === 0) return { streams: [], cacheMaxAge: 60 }; 
 
         const hashes = torrents.map(t => t.hash);
         
@@ -235,7 +243,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
         streams.forEach(s => delete s._bytes);
         return { streams: streams, cacheMaxAge: 5 };
     } catch (err) {
-        return { streams: [] };
+        return { streams: [], cacheMaxAge: 60 };
     }
 });
 
