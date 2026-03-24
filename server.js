@@ -13,6 +13,12 @@ app.use((req, res, next) => {
     next();
 });
 
+
+// Health Check Endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
+});
+
 // Static Folders
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'static')));
