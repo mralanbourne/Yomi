@@ -3,7 +3,7 @@ const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime 
 const { searchSukebeiForHentai, cleanTorrentTitle } = require('./lib/sukebei');
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/debrid');
 
-// predefine the catalogs here, but they will be dynamically filtered by server.js later
+// Predefine the catalogs here, but they will be dynamically filtered by server.js later
 const manifest = {
     id: "org.community.yomi",
     version: "1.0.0",
@@ -24,6 +24,7 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+// Decodes the base64 or URI encoded configuration object passed from the user installation URL
 function parseConfig(config) {
     if (!config) return {};
     if (typeof config === 'object') return config;
@@ -38,6 +39,7 @@ function parseConfig(config) {
     }
 }
 
+// Converts a human-readable size string (e.g. '1.5 GiB') to raw bytes for Stremio sorting
 function parseSizeToBytes(sizeStr) {
     if (!sizeStr) return 0;
     const match = sizeStr.match(/([\d.]+)\s*(GiB|MiB|KiB|GB|MB|KB)/i);
@@ -50,6 +52,7 @@ function parseSizeToBytes(sizeStr) {
     return val;
 }
 
+// Extracts tags like resolution and language from torrent titles to display them in the UI
 function extractTags(title) {
     let res = "SD";
     if (/(1080p|1080|FHD)/i.test(title)) res = "1080p";
@@ -67,6 +70,11 @@ function extractTags(title) {
     }
 
     return { res, lang };
+}
+
+// Cleans AniList titles before sending them to Sukebei
+function sanitizeSearchQuery(title) {
+    return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
 // --- CATALOG HANDLER ---
@@ -93,6 +101,7 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
         const finalMetas = [...anilistMetas];
         const rawGroups = {};
 
+        // Group Sukebei torrents by cleaned title to prevent catalog clutter
         sukebeiTorrents.forEach(t => {
             const cleanName = cleanTorrentTitle(t.title);
             if (cleanName.length > 2) {
@@ -102,11 +111,13 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
         });
 
         for (const [cleanName, torrents] of Object.entries(rawGroups)) {
+            // Check if this torrent group is already mapped by Anilist results
             const existsInAnilist = anilistMetas.some(m => 
                 m.name.toLowerCase().includes(cleanName.toLowerCase()) || 
                 cleanName.toLowerCase().includes(m.name.toLowerCase())
             );
             
+            // If it does not exist in Anilist, we append it as a raw Sukebei result
             if (!existsInAnilist) {
                 const base64Title = Buffer.from(cleanName).toString('base64url');
                 const placeholderUrl = "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ASUKEBEI%0ARESULT";
@@ -121,7 +132,8 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
             }
         }
         
-        // SMART CACHE: If results are empty (e.g. timeout), cache for only 1 minute
+        // SMART CACHE: If results are empty (e.g. Sukebei timeout), cache for only 1 minute to allow quick retries.
+        // If results exist, cache for 24 hours.
         const cacheAge = finalMetas.length === 0 ? 60 : 86400;
         return { metas: finalMetas, cacheMaxAge: cacheAge };
     }
@@ -164,12 +176,18 @@ builder.defineStreamHandler(async ({ id, config }) => {
         let searchTitle = "";
 
         // PARSE ID & EPISODE HANDLING
+        // Anilist streams have the format: anilist:[id]:[base64Title]:[season]:[episode]
         if (id.startsWith('anilist:')) {
             const idParts = id.split(':');
             if (idParts.length < 3) return { streams: [] };
-            searchTitle = Buffer.from(idParts[2], 'base64url').toString('utf8');
             
-            // Handle series episodes (Stremio format: anilist:id:base64:season:episode)
+            // 1. Decode base64 title
+            let rawTitle = Buffer.from(idParts[2], 'base64url').toString('utf8');
+            
+            // 2. Sanitize title (remove years like "(2019)" which break Sukebei searches)
+            searchTitle = sanitizeSearchQuery(rawTitle);
+            
+            // 3. Append episode number if it's a series
             if (idParts.length >= 5) {
                 const epNumber = parseInt(idParts[4], 10);
                 const epString = epNumber < 10 ? `0${epNumber}` : `${epNumber}`;
@@ -178,7 +196,9 @@ builder.defineStreamHandler(async ({ id, config }) => {
         } else if (id.startsWith('sukebei:')) {
             const idParts = id.split(':');
             if (idParts.length < 2) return { streams: [] };
-            searchTitle = Buffer.from(idParts[1], 'base64url').toString('utf8');
+            
+            let rawTitle = Buffer.from(idParts[1], 'base64url').toString('utf8');
+            searchTitle = sanitizeSearchQuery(rawTitle);
             
             // Fallback for Sukebei raw series
             if (idParts.length >= 4) {
@@ -191,11 +211,13 @@ builder.defineStreamHandler(async ({ id, config }) => {
         }
 
         const torrents = await searchSukebeiForHentai(searchTitle);
-        // SMART CACHE for streams
+        
+        // SMART CACHE for streams: do not hard cache empty results
         if (torrents.length === 0) return { streams: [], cacheMaxAge: 60 }; 
 
         const hashes = torrents.map(t => t.hash);
         
+        // Check availability on Debrid providers simultaneously
         const [rdCached, tbCached, rdActive, tbActive] = await Promise.all([
             userConfig.rdKey ? checkRD(hashes, userConfig.rdKey) : Promise.resolve([]),
             userConfig.tbKey ? checkTorbox(hashes, userConfig.tbKey) : Promise.resolve([]),
@@ -207,6 +229,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
         torrents.forEach(t => {
             const { res, lang } = extractTags(t.title);
             const bytes = parseSizeToBytes(t.size);
+            
+            // Structured stream description for Stremio UI
             const streamDescription = `🌐 Sukebei Network\n💾 ${t.size}  |  👤 ${t.seeders}  |  🗣️ ${lang}\n📄 ${t.title}`;
 
             if (userConfig.rdKey) {
@@ -244,6 +268,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             }
         });
 
+        // Sort by cached status first, then by file size
         streams.sort((a, b) => {
             const aCached = a.name.includes('⚡');
             const bCached = b.name.includes('⚡');
@@ -252,6 +277,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             return b._bytes - a._bytes;
         });
 
+        // Remove temporary byte sizes used for sorting before returning
         streams.forEach(s => delete s._bytes);
         return { streams: streams, cacheMaxAge: 5 };
     } catch (err) {
@@ -259,6 +285,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
     }
 });
 
+// Export interface, manifest and parser bundled so the server can intercept them
 module.exports = {
     addonInterface: builder.getInterface(),
     manifest,
