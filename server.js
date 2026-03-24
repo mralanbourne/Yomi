@@ -22,16 +22,15 @@ app.get('/health', (req, res) => {
 });
 
 // Register static folders
+// express.static handles Byte-Range requests perfectly for our local waiting.mp4
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'static')));
 
 // ROUTE: CONFIGURE FIX
-// If Stremio attempts to configure the addon, redirect the user back to the main setup page
 app.get('/configure', (req, res) => res.redirect('/'));
 app.get('/:config/configure', (req, res) => res.redirect('/'));
 
 // DYNAMIC CATALOG INTERCEPTOR
-// Filters out "Trending" and "Top Rated" catalogs if the user opted out in the UI
 app.get('/:config/manifest.json', (req, res, next) => {
     try {
         const configStr = req.params.config;
@@ -40,17 +39,14 @@ app.get('/:config/manifest.json', (req, res, next) => {
         const config = parseConfig(configStr);
         if (!config || Object.keys(config).length === 0) return next();
 
-        // Create a deep copy of the original manifest for modification
         const dynamicManifest = JSON.parse(JSON.stringify(manifest));
         
-        // FIX: Tell Stremio the addon is fully configured so the "Install" button appears
         if (dynamicManifest.behaviorHints) {
             dynamicManifest.behaviorHints.configurationRequired = false;
         }
 
         const catalogs = [];
         
-        // Push catalogs only if the user allowed them (default is true)
         if (config.showTrending !== false) {
             catalogs.push({ id: 'sukebei_trending', type: 'movie', name: 'Trending' });
         }
@@ -58,7 +54,6 @@ app.get('/:config/manifest.json', (req, res, next) => {
             catalogs.push({ id: 'sukebei_top', type: 'movie', name: 'Top Rated' });
         }
         
-        // The search catalog is always mandatory
         catalogs.push({ 
             type: "movie", 
             id: "sukebei_search", 
@@ -68,28 +63,28 @@ app.get('/:config/manifest.json', (req, res, next) => {
 
         dynamicManifest.catalogs = catalogs;
         
-        // IMPORTANT: Stremio Web expects proper CORS headers for the manifest file
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Headers', '*');
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.json(dynamicManifest);
     } catch (e) {
-        // Fallback to the standard Stremio router on error
         next(); 
     }
 });
 
-// Standard Stremio router handles everything else
 app.use('/', getRouter(addonInterface));
 
 // ============================================================================
-// EXTERNAL RELEASE VIDEO REDIRECT
+// LOCAL VIDEO REDIRECT
 // ============================================================================
 function serveLoadingVideo(req, res) {
-    // The direct GitHub release link provided by the user
-    const externalVideoUrl = "https://files.catbox.moe/6408rv.mp4";
-    console.log(`[RESOLVE] Torrent not cached. Redirecting to Catbox video: ${externalVideoUrl}`);
-    res.redirect(externalVideoUrl);
+    // Generate the correct URL dynamically for the local server (handling HTTP/HTTPS)
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const host = req.headers.host;
+    const videoUrl = `${protocol}://${host}/waiting.mp4`;
+    
+    console.log(`[RESOLVE] Torrent not cached. Serving local SSD video: ${videoUrl}`);
+    res.redirect(videoUrl);
 }
 
 app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
