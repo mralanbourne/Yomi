@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Yomi Setup | Your Sukebei Gateway</title>
+    <title>Yomi Setup | Your Forbidden Gateway</title>
     
     <link rel="icon" type="image/png" href="/yomi.png">
     
@@ -12,11 +12,11 @@
     <style>
         body {
             font-family: 'Kaisei Tokumin', serif;
-            background-color: #050505; /* Deep, Luxurious Black */
+            background-color: #050505;
             background-image: 
                 radial-gradient(circle at 15% 50%, rgba(233, 30, 99, 0.15), transparent 25%),
                 radial-gradient(circle at 85% 30%, rgba(156, 39, 176, 0.15), transparent 25%),
-                radial-gradient(circle at 50% 50%, rgba(255, 215, 0, 0.05), transparent 50%); /* Subtle gold accent */
+                radial-gradient(circle at 50% 50%, rgba(255, 215, 0, 0.05), transparent 50%);
             background-size: 100% 100%;
             animation: backgroundShift 15s ease-in-out infinite alternate;
         }
@@ -26,12 +26,11 @@
             100% { background-position: 100% 50%; }
         }
 
-        /* Highly transparent dark glass block with strong blur for Mac-style effect */
         .glass-card {
             background: rgba(10, 10, 15, 0.1); 
             backdrop-filter: blur(25px);
             -webkit-backdrop-filter: blur(25px);
-            border: 1px solid rgba(255, 255, 255, 0.05); /* Thin, elegant border */
+            border: 1px solid rgba(255, 255, 255, 0.05);
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 1), inset 0 0 20px rgba(233, 30, 99, 0.02);
             animation: float 6s ease-in-out infinite;
         }
@@ -43,11 +42,7 @@
 
         .neon-text {
             color: #fff;
-            text-shadow: 
-                0 0 5px #fff,
-                0 0 10px #e91e63,
-                0 0 20px #e91e63,
-                0 0 40px #9c27b0;
+            text-shadow: 0 0 5px #fff, 0 0 10px #e91e63, 0 0 20px #e91e63, 0 0 40px #9c27b0;
             font-weight: 800;
         }
 
@@ -58,7 +53,6 @@
             text-transform: uppercase;
         }
 
-        /* Large watermarked logo in background - organic glass style */
         .bg-logo-container {
             position: fixed;
             inset: 0;
@@ -72,7 +66,7 @@
         .bg-logo {
             width: 80%;
             max-width: 800px;
-            opacity: 0.03; /* Very subtle glass-like integration */
+            opacity: 0.03;
             filter: blur(2px) saturate(0);
             transform: rotate(-5deg);
         }
@@ -89,6 +83,37 @@
             background-color: rgba(0, 0, 0, 0.7);
         }
 
+        /* Custom UI Checkbox matching the Glass Design */
+        .glass-checkbox {
+            appearance: none;
+            width: 1.25rem;
+            height: 1.25rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 0.3rem;
+            outline: none;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .glass-checkbox:checked {
+            background: #e91e63;
+            border-color: #e91e63;
+            box-shadow: 0 0 10px rgba(233, 30, 99, 0.5);
+        }
+
+        .glass-checkbox:checked::after {
+            content: '✓';
+            position: absolute;
+            color: white;
+            font-size: 0.8rem;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: sans-serif;
+        }
+
         .btn-neon {
             background: linear-gradient(135deg, #e91e63, #9c27b0);
             background-size: 200% 200%;
@@ -101,7 +126,6 @@
             transform: scale(1.02);
         }
 
-        /* Popup / Modal Styling */
         #modal-overlay {
             display: none;
             position: fixed;
@@ -152,7 +176,18 @@
             <input type="password" id="tbKey" placeholder="Torbox Key" 
                 class="w-full input-glass rounded-2xl px-6 py-5 text-white placeholder-gray-700 outline-none transition-all duration-300 input-glow font-mono text-sm tracking-widest">
 
-            <div class="pt-10 space-y-4">
+            <div class="flex flex-col space-y-4 pt-2 pb-2 text-left px-2">
+                <label class="flex items-center space-x-4 cursor-pointer group">
+                    <input type="checkbox" id="showTrending" checked class="glass-checkbox">
+                    <span class="text-[11px] font-mono text-gray-500 uppercase tracking-widest group-hover:text-pink-400 transition-colors">Show Trending Catalog</span>
+                </label>
+                <label class="flex items-center space-x-4 cursor-pointer group">
+                    <input type="checkbox" id="showTop" checked class="glass-checkbox">
+                    <span class="text-[11px] font-mono text-gray-500 uppercase tracking-widest group-hover:text-pink-400 transition-colors">Show Top Rated Catalog</span>
+                </label>
+            </div>
+
+            <div class="pt-6 space-y-4">
                 <button onclick="install('app')" class="w-full btn-neon py-5 rounded-2xl font-bold text-white text-xl tracking-wider uppercase shadow-xl">
                     Install in Stremio
                 </button>
@@ -162,7 +197,7 @@
             </div>
         </div>
 
-        <div class="mt-14 pt-8 border-t border-gray-900 flex justify-center space-x-12 opacity-40 hover:opacity-100 transition-opacity duration-700">
+        <div class="mt-12 pt-8 border-t border-gray-900 flex justify-center space-x-12 opacity-40 hover:opacity-100 transition-opacity duration-700">
             <a href="https://github.com/mralanbourne/Yomi" target="_blank" class="text-gray-600 hover:text-white transition-all transform hover:scale-110">
                 <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
             </a>
@@ -184,13 +219,11 @@
 
     <script>
         function showModal() {
-            const overlay = document.getElementById('modal-overlay');
-            overlay.classList.add('show-modal');
+            document.getElementById('modal-overlay').classList.add('show-modal');
         }
 
         function closeModal() {
-            const overlay = document.getElementById('modal-overlay');
-            overlay.classList.remove('show-modal');
+            document.getElementById('modal-overlay').classList.remove('show-modal');
         }
 
         function install(type) {
@@ -198,17 +231,18 @@
             const tb = document.getElementById('tbKey').value.trim();
             
             if (!rd && !tb) {
-                // Visual feedback: brief border pulse
                 const card = document.querySelector('.glass-card');
                 card.style.borderColor = '#e91e63';
                 setTimeout(() => card.style.borderColor = '', 1000);
-                
-                // Show the stylistic modal
                 showModal();
                 return;
             }
 
-            const config = JSON.stringify({ rdKey: rd, tbKey: tb });
+            // Capture catalog settings from the UI
+            const showTrending = document.getElementById('showTrending').checked;
+            const showTop = document.getElementById('showTop').checked;
+
+            const config = JSON.stringify({ rdKey: rd, tbKey: tb, showTrending, showTop });
             const manifestUrl = window.location.origin + "/" + encodeURIComponent(config) + "/manifest.json";
             
             if (type === 'app') {
@@ -218,8 +252,7 @@
             }
         }
 
-        // Reset state on input
-        document.querySelectorAll('input').forEach(input => {
+        document.querySelectorAll('input[type="password"]').forEach(input => {
             input.addEventListener('input', () => {
                 input.style.borderColor = '';
             });
