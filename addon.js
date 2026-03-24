@@ -1,24 +1,23 @@
 const { addonBuilder } = require("stremio-addon-sdk");
-const { searchAdultAnime, getAnimeMeta } = require('./lib/anilist');
+const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime } = require('./lib/anilist');
 const { searchSukebeiForHentai, cleanTorrentTitle } = require('./lib/sukebei');
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/debrid');
 
+// predefine the catalogs here, but they will be dynamically filtered by server.js later
 const manifest = {
     id: "org.community.yomi",
     version: "1.0.0",
     name: "Yomi",
-    // Replace with your production domain (e.g., https://yomi.koyeb.app/yomi.png) after deployment
     logo: "http://127.0.0.1:7000/yomi.png", 
     description: "The Forbidden Gateway to Sukebei",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["anilist:", "sukebei:"],
-    catalogs: [{ 
-        type: "movie", 
-        id: "sukebei_search", 
-        name: "Yomi Search", 
-        extra: [{ name: "search", isRequired: true }] 
-    }],
+    catalogs: [
+        { id: "sukebei_trending", type: "movie", name: "Trending" },
+        { id: "sukebei_top", type: "movie", name: "Top Rated" },
+        { id: "sukebei_search", type: "movie", name: "Yomi Search", extra: [{ name: "search", isRequired: true }] }
+    ],
     config: [{ key: "apiKey", type: "text", title: "API Key", required: true }],
     behaviorHints: { configurable: true, configurationRequired: true }
 };
@@ -70,19 +69,30 @@ function extractTags(title) {
     return { res, lang };
 }
 
-// --- CATALOG HANDLER ---
+// CATALOG HANDLER
 builder.defineCatalogHandler(async ({ id, extra }) => {
-    console.log(`[CATALOG] Search query: "${extra.search}"`);
+    
+    if (id === "sukebei_trending") {
+        const metas = await getTrendingAdultAnime();
+        return { metas, cacheMaxAge: 43200 }; // 12h Cache
+    }
+
+    if (id === "sukebei_top") {
+        const metas = await getTopAdultAnime();
+        return { metas, cacheMaxAge: 43200 }; // 12h Cache
+    }
+
     if (id === "sukebei_search" && extra.search) {
-        
+        if (extra.search.length < 3) return { metas: [] };
+
         const [anilistMetas, sukebeiTorrents] = await Promise.all([
             searchAdultAnime(extra.search),
             searchSukebeiForHentai(extra.search)
         ]);
 
         const finalMetas = [...anilistMetas];
-
         const rawGroups = {};
+
         sukebeiTorrents.forEach(t => {
             const cleanName = cleanTorrentTitle(t.title);
             if (cleanName.length > 2) {
@@ -99,8 +109,6 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
             
             if (!existsInAnilist) {
                 const base64Title = Buffer.from(cleanName).toString('base64url');
-                
-                // Bold pink placeholder design for Raw SKB results
                 const placeholderUrl = "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ASUKEBEI%0ARESULT";
                 
                 finalMetas.push({
@@ -112,13 +120,12 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
                 });
             }
         }
-
         return { metas: finalMetas, cacheMaxAge: 604800 };
     }
     return { metas: [] };
 });
 
-// --- META HANDLER ---
+// META HANDLER
 builder.defineMetaHandler(async ({ id }) => {
     if (id.startsWith('anilist:')) {
         const anilistId = id.split(':')[1]; 
@@ -145,14 +152,13 @@ builder.defineMetaHandler(async ({ id }) => {
     return { meta: { id: id, type: "movie", name: "Not found" } }; 
 });
 
-// --- STREAM HANDLER ---
+// STREAM HANDLER
 builder.defineStreamHandler(async ({ id, config }) => {
     const userConfig = parseConfig(config);
     if (!userConfig.rdKey && !userConfig.tbKey) return { streams: [] };
 
     try {
         let searchTitle = "";
-
         if (id.startsWith('anilist:')) {
             const idParts = id.split(':');
             if (idParts.length < 3) return { streams: [] };
@@ -165,7 +171,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
             return { streams: [] };
         }
 
-        console.log(`[STREAM] Searching Sukebei for: "${searchTitle}"`);
         const torrents = await searchSukebeiForHentai(searchTitle);
         if (torrents.length === 0) return { streams: [], cacheMaxAge: 3600 };
 
@@ -187,23 +192,15 @@ builder.defineStreamHandler(async ({ id, config }) => {
             if (userConfig.rdKey) {
                 const isCached = rdCached.includes(t.hash);
                 const progress = rdActive[t.hash];
-                
                 let name, binge;
-                if (isCached) {
-                    name = `[⚡ RD] ${res}`;
-                    binge = null;
-                } else if (progress !== undefined) {
-                    name = `[⏳ ${progress}%] RD ${res}`;
-                    binge = null; 
-                } else {
-                    name = `[☁️ DL] RD ${res}`;
-                    binge = `rd_dl_${t.hash}`;
-                }
+                if (isCached) { name = `[⚡ RD] ${res}`; binge = null; }
+                else if (progress !== undefined) { name = `[⏳ ${progress}%] RD ${res}`; binge = null; }
+                else { name = `[☁️ DL] RD ${res}`; binge = `rd_dl_${t.hash}`; }
 
                 streams.push({
                     name: name,
                     title: streamTitle,
-                    url: `http://127.0.0.1:7000/resolve/realdebrid/${userConfig.rdKey}/${t.hash}`,
+                    url: `${process.env.BASE_URL || 'http://127.0.0.1:7000'}/resolve/realdebrid/${userConfig.rdKey}/${t.hash}`,
                     behaviorHints: { notWebReady: true, bingeGroup: binge },
                     _bytes: bytes 
                 });
@@ -212,23 +209,15 @@ builder.defineStreamHandler(async ({ id, config }) => {
             if (userConfig.tbKey) {
                 const isCached = tbCached.includes(t.hash);
                 const progress = tbActive[t.hash];
-                
                 let name, binge;
-                if (isCached) {
-                    name = `[⚡ TB] ${res}`;
-                    binge = null;
-                } else if (progress !== undefined) {
-                    name = `[⏳ ${progress}%] TB ${res}`;
-                    binge = null;
-                } else {
-                    name = `[☁️ DL] TB ${res}`;
-                    binge = `tb_dl_${t.hash}`;
-                }
+                if (isCached) { name = `[⚡ TB] ${res}`; binge = null; }
+                else if (progress !== undefined) { name = `[⏳ ${progress}%] TB ${res}`; binge = null; }
+                else { name = `[☁️ DL] TB ${res}`; binge = `tb_dl_${t.hash}`; }
 
                 streams.push({
                     name: name,
                     title: streamTitle,
-                    url: `http://127.0.0.1:7000/resolve/torbox/${userConfig.tbKey}/${t.hash}`,
+                    url: `${process.env.BASE_URL || 'http://127.0.0.1:7000'}/resolve/torbox/${userConfig.tbKey}/${t.hash}`,
                     behaviorHints: { notWebReady: true, bingeGroup: binge },
                     _bytes: bytes 
                 });
@@ -240,22 +229,19 @@ builder.defineStreamHandler(async ({ id, config }) => {
             const bCached = b.name.includes('⚡');
             if (aCached && !bCached) return -1;
             if (!aCached && bCached) return 1;
-
-            const aProg = a.name.includes('⏳');
-            const bProg = b.name.includes('⏳');
-            if (aProg && !bProg) return -1;
-            if (!aProg && bProg) return 1;
-
             return b._bytes - a._bytes;
         });
 
         streams.forEach(s => delete s._bytes);
-
         return { streams: streams, cacheMaxAge: 5 };
     } catch (err) {
-        console.error("[STREAM ERROR]", err.message);
         return { streams: [] };
     }
 });
 
-module.exports = builder.getInterface();
+// Export interface, manifest and parser bundled so the server can intercept them
+module.exports = {
+    addonInterface: builder.getInterface(),
+    manifest,
+    parseConfig
+};
