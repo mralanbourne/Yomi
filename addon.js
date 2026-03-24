@@ -1,12 +1,11 @@
 const { addonBuilder } = require("stremio-addon-sdk");
-// NEU: getJikanMeta importiert
 const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime, getJikanMeta } = require('./lib/anilist');
 const { searchSukebeiForHentai, cleanTorrentTitle } = require('./lib/sukebei');
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/debrid');
 
 const manifest = {
     id: "org.community.yomi",
-    version: "3.7.0",
+    version: "3.7.1",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
     description: "Ultimate Hentai Gateway. Dual-Database (AniList+MAL) & Smart Episode Proxy.",
@@ -52,6 +51,11 @@ function extractTags(title) {
     else if (/(sub)/i.test(title)) lang = "Subbed";
     if (/(uncensored|decensored)/i.test(title)) lang += " | Uncen";
     return { res, lang };
+}
+
+// FIX: DIE FEHLENDE FUNKTION WURDE WIEDER EINGEBAUT!
+function sanitizeSearchQuery(title) {
+    return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
 function cleanStringForMatching(str) {
@@ -203,6 +207,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
     const userConfig = parseConfig(config);
     let searchTitle = "", requestedEp = 1;
     
+    // VERWENDUNG DER NUN EXISTIERENDEN FUNKTION
     if (id.startsWith('anilist:')) {
         const parts = id.split(':');
         searchTitle = sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8'));
