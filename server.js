@@ -16,6 +16,7 @@ app.use((req, res, next) => {
 });
 
 // Health Check Endpoint
+// Prevents the application from spinning down on PaaS platforms like Koyeb
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
 });
@@ -23,6 +24,10 @@ app.get('/health', (req, res) => {
 // Register static folders
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'static')));
+
+// If Stremio attempts to configure the addon, redirect the user back to the main setup page
+app.get('/configure', (req, res) => res.redirect('/'));
+app.get('/:config/configure', (req, res) => res.redirect('/'));
 
 // DYNAMIC CATALOG INTERCEPTOR
 // Filters out "Trending" and "Top Rated" catalogs if the user opted out in the UI
@@ -36,6 +41,12 @@ app.get('/:config/manifest.json', (req, res, next) => {
 
         // Create a deep copy of the original manifest for modification
         const dynamicManifest = JSON.parse(JSON.stringify(manifest));
+        
+
+        if (dynamicManifest.behaviorHints) {
+            dynamicManifest.behaviorHints.configurationRequired = false;
+        }
+
         const catalogs = [];
         
         // Push catalogs only if the user allowed them (default is true)
