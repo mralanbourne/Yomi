@@ -3,7 +3,6 @@ const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime 
 const { searchSukebeiForHentai, cleanTorrentTitle } = require('./lib/sukebei');
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/debrid');
 
-// predefine the catalogs here, but they will be dynamically filtered by server.js
 const manifest = {
     id: "org.community.yomi",
     version: "1.0.0",
@@ -74,12 +73,12 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
     
     if (id === "sukebei_trending") {
         const metas = await getTrendingAdultAnime();
-        return { metas, cacheMaxAge: 43200 }; // 12h Cache
+        return { metas, cacheMaxAge: 43200 }; 
     }
 
     if (id === "sukebei_top") {
         const metas = await getTopAdultAnime();
-        return { metas, cacheMaxAge: 43200 }; // 12h Cache
+        return { metas, cacheMaxAge: 43200 }; 
     }
 
     if (id === "sukebei_search" && extra.search) {
@@ -116,16 +115,12 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
                     type: 'movie',
                     name: cleanName,
                     poster: placeholderUrl,
-                    description: "Direct search result from the Sukebei network (No AniList metadata)."
+                    description: "Direct search result from the Sukebei network."
                 });
             }
         }
         
-        // SMART CACHE:
-        // if result is empty (e.G. Sukebei Timeout), only cache for a minute
-        // if results are there, cache for 24H (86400)
         const cacheAge = finalMetas.length === 0 ? 60 : 86400;
-        
         return { metas: finalMetas, cacheMaxAge: cacheAge };
     }
     return { metas: [] };
@@ -149,7 +144,7 @@ builder.defineMetaHandler(async ({ id }) => {
                 type: 'movie',
                 name: cleanName,
                 poster: placeholderUrl,
-                description: "Direct search result from the Sukebei network (No AniList metadata)."
+                description: "Direct search result from the Sukebei network."
             }, 
             cacheMaxAge: 604800 
         };
@@ -165,21 +160,36 @@ builder.defineStreamHandler(async ({ id, config }) => {
 
     try {
         let searchTitle = "";
+
+        // PARSE ID & EPISODE HANDLING
         if (id.startsWith('anilist:')) {
             const idParts = id.split(':');
             if (idParts.length < 3) return { streams: [] };
             searchTitle = Buffer.from(idParts[2], 'base64url').toString('utf8');
+            
+            // Wenn es eine Serie ist (Stremio ID Format: anilist:id:base64:season:episode)
+            if (idParts.length >= 5) {
+                const epNumber = parseInt(idParts[4], 10);
+                const epString = epNumber < 10 ? `0${epNumber}` : `${epNumber}`;
+                // Hängt die Episode an die Suche an (z.B. "Mankitsu Happening 02")
+                searchTitle = `${searchTitle} ${epString}`;
+            }
         } else if (id.startsWith('sukebei:')) {
             const idParts = id.split(':');
             if (idParts.length < 2) return { streams: [] };
             searchTitle = Buffer.from(idParts[1], 'base64url').toString('utf8');
+            
+            // Fallback für Sukebei Raw Serien
+            if (idParts.length >= 4) {
+                const epNumber = parseInt(idParts[3], 10);
+                const epString = epNumber < 10 ? `0${epNumber}` : `${epNumber}`;
+                searchTitle = `${searchTitle} ${epString}`;
+            }
         } else {
             return { streams: [] };
         }
 
         const torrents = await searchSukebeiForHentai(searchTitle);
-        
-        // SMART CACHE for Streams
         if (torrents.length === 0) return { streams: [], cacheMaxAge: 60 }; 
 
         const hashes = torrents.map(t => t.hash);
@@ -195,19 +205,21 @@ builder.defineStreamHandler(async ({ id, config }) => {
         torrents.forEach(t => {
             const { res, lang } = extractTags(t.title);
             const bytes = parseSizeToBytes(t.size);
-            const streamTitle = `💾 ${t.size}  |  👤 ${t.seeders}  |  🗣️ ${lang}\n📄 ${t.title}`;
+            
+            // NEUES UI FORMAT FÜR STREMIO
+            const streamDescription = `🌐 Sukebei Network\n💾 ${t.size}  |  👤 ${t.seeders}  |  🗣️ ${lang}\n📄 ${t.title}`;
 
             if (userConfig.rdKey) {
                 const isCached = rdCached.includes(t.hash);
                 const progress = rdActive[t.hash];
                 let name, binge;
-                if (isCached) { name = `[⚡ RD] ${res}`; binge = null; }
-                else if (progress !== undefined) { name = `[⏳ ${progress}%] RD ${res}`; binge = null; }
-                else { name = `[☁️ DL] RD ${res}`; binge = `rd_dl_${t.hash}`; }
+                if (isCached) { name = `YOMI [⚡ RD]\n🎥 ${res}`; binge = null; }
+                else if (progress !== undefined) { name = `YOMI [⏳ ${progress}%]\n🎥 ${res}`; binge = null; }
+                else { name = `YOMI [☁️ DL]\n🎥 ${res}`; binge = `rd_dl_${t.hash}`; }
 
                 streams.push({
                     name: name,
-                    title: streamTitle,
+                    title: streamDescription,
                     url: `${process.env.BASE_URL || 'http://127.0.0.1:7000'}/resolve/realdebrid/${userConfig.rdKey}/${t.hash}`,
                     behaviorHints: { notWebReady: true, bingeGroup: binge },
                     _bytes: bytes 
@@ -218,13 +230,13 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 const isCached = tbCached.includes(t.hash);
                 const progress = tbActive[t.hash];
                 let name, binge;
-                if (isCached) { name = `[⚡ TB] ${res}`; binge = null; }
-                else if (progress !== undefined) { name = `[⏳ ${progress}%] TB ${res}`; binge = null; }
-                else { name = `[☁️ DL] TB ${res}`; binge = `tb_dl_${t.hash}`; }
+                if (isCached) { name = `YOMI [⚡ TB]\n🎥 ${res}`; binge = null; }
+                else if (progress !== undefined) { name = `YOMI [⏳ ${progress}%]\n🎥 ${res}`; binge = null; }
+                else { name = `YOMI [☁️ DL]\n🎥 ${res}`; binge = `tb_dl_${t.hash}`; }
 
                 streams.push({
                     name: name,
-                    title: streamTitle,
+                    title: streamDescription,
                     url: `${process.env.BASE_URL || 'http://127.0.0.1:7000'}/resolve/torbox/${userConfig.tbKey}/${t.hash}`,
                     behaviorHints: { notWebReady: true, bingeGroup: binge },
                     _bytes: bytes 
@@ -247,7 +259,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
     }
 });
 
-// Export interface, manifest and parser bundled so the server can intercept them
 module.exports = {
     addonInterface: builder.getInterface(),
     manifest,
