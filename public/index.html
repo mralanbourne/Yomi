@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Yomi Setup | Your Forbidden Gateway</title>
+    <title>Yomi Setup | Forbidden Gateway</title>
     
     <link rel="icon" type="image/png" href="/yomi.png">
     
@@ -246,7 +246,7 @@
             const manifestUrl = window.location.origin + "/" + encodeURIComponent(config) + "/manifest.json";
             
             if (type === 'app') {
-                window.location.href = manifestUrl.replace(/^http/, "stremio");
+                window.location.href = manifestUrl.replace(/^https?:\/\//i, "stremio://");
             } else {
                 window.open("https://web.stremio.com/#/addons?addon=" + encodeURIComponent(manifestUrl));
             }
