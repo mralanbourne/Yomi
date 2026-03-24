@@ -3,7 +3,6 @@ const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime 
 const { searchSukebeiForHentai, cleanTorrentTitle } = require('./lib/sukebei');
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/debrid');
 
-// Predefine the catalogs here, but they will be dynamically filtered by server.js later
 const manifest = {
     id: "org.community.yomi",
     version: "1.0.0",
@@ -24,7 +23,6 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// Decodes the base64 or URI encoded configuration object passed from the user installation URL
 function parseConfig(config) {
     if (!config) return {};
     if (typeof config === 'object') return config;
@@ -39,7 +37,6 @@ function parseConfig(config) {
     }
 }
 
-// Converts a human-readable size string (e.g. '1.5 GiB') to raw bytes for Stremio sorting
 function parseSizeToBytes(sizeStr) {
     if (!sizeStr) return 0;
     const match = sizeStr.match(/([\d.]+)\s*(GiB|MiB|KiB|GB|MB|KB)/i);
@@ -52,7 +49,6 @@ function parseSizeToBytes(sizeStr) {
     return val;
 }
 
-// Extracts tags like resolution and language from torrent titles to display them in the UI
 function extractTags(title) {
     let res = "SD";
     if (/(1080p|1080|FHD)/i.test(title)) res = "1080p";
@@ -72,22 +68,20 @@ function extractTags(title) {
     return { res, lang };
 }
 
-// Cleans AniList titles before sending them to Sukebei
 function sanitizeSearchQuery(title) {
     return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
-// --- CATALOG HANDLER ---
 builder.defineCatalogHandler(async ({ id, extra }) => {
     
     if (id === "sukebei_trending") {
         const metas = await getTrendingAdultAnime();
-        return { metas, cacheMaxAge: 43200 }; // 12h Cache
+        return { metas, cacheMaxAge: 43200 };
     }
 
     if (id === "sukebei_top") {
         const metas = await getTopAdultAnime();
-        return { metas, cacheMaxAge: 43200 }; // 12h Cache
+        return { metas, cacheMaxAge: 43200 };
     }
 
     if (id === "sukebei_search" && extra.search) {
@@ -101,7 +95,6 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
         const finalMetas = [...anilistMetas];
         const rawGroups = {};
 
-        // Group Sukebei torrents by cleaned title to prevent catalog clutter
         sukebeiTorrents.forEach(t => {
             const cleanName = cleanTorrentTitle(t.title);
             if (cleanName.length > 2) {
@@ -111,13 +104,11 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
         });
 
         for (const [cleanName, torrents] of Object.entries(rawGroups)) {
-            // Check if this torrent group is already mapped by Anilist results
             const existsInAnilist = anilistMetas.some(m => 
                 m.name.toLowerCase().includes(cleanName.toLowerCase()) || 
                 cleanName.toLowerCase().includes(m.name.toLowerCase())
             );
             
-            // If it does not exist in Anilist, we append it as a raw Sukebei result
             if (!existsInAnilist) {
                 const base64Title = Buffer.from(cleanName).toString('base64url');
                 const placeholderUrl = "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ASUKEBEI%0ARESULT";
@@ -132,15 +123,12 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
             }
         }
         
-        // SMART CACHE: If results are empty (e.g. Sukebei timeout), cache for only 1 minute to allow quick retries.
-        // If results exist, cache for 24 hours.
         const cacheAge = finalMetas.length === 0 ? 60 : 86400;
         return { metas: finalMetas, cacheMaxAge: cacheAge };
     }
     return { metas: [] };
 });
 
-// --- META HANDLER ---
 builder.defineMetaHandler(async ({ id }) => {
     if (id.startsWith('anilist:')) {
         const anilistId = id.split(':')[1]; 
@@ -167,7 +155,6 @@ builder.defineMetaHandler(async ({ id }) => {
     return { meta: { id: id, type: "movie", name: "Not found" } }; 
 });
 
-// --- STREAM HANDLER ---
 builder.defineStreamHandler(async ({ id, config }) => {
     const userConfig = parseConfig(config);
     if (!userConfig.rdKey && !userConfig.tbKey) return { streams: [] };
@@ -175,7 +162,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
     try {
         let searchTitle = "";
 
-        // PARSE ID & EPISODE HANDLING
         if (id.startsWith('anilist:')) {
             const idParts = id.split(':');
             if (idParts.length < 3) return { streams: [] };
@@ -228,7 +214,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 const isCached = rdCached.includes(t.hash);
                 const progress = rdActive[t.hash];
                 let name, binge;
-                if (isCached) { name = `YOMI [⚡ RD]\n🎥 ${res}`; binge = null; }
+                // FIX: Wenn der Torrent auf dem Dashboard existiert und 100% fertig ist, zeige den Blitz!
+                if (isCached || progress === 100) { name = `YOMI [⚡ RD]\n🎥 ${res}`; binge = null; }
                 else if (progress !== undefined) { name = `YOMI [⏳ ${progress}% RD]\n🎥 ${res}`; binge = null; }
                 else { name = `YOMI [☁️ RD DL]\n🎥 ${res}`; binge = `rd_dl_${t.hash}`; }
 
@@ -245,7 +232,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 const isCached = tbCached.includes(t.hash);
                 const progress = tbActive[t.hash];
                 let name, binge;
-                if (isCached) { name = `YOMI [⚡ TB]\n🎥 ${res}`; binge = null; }
+                // FIX: Wenn der Torrent auf dem Dashboard existiert und 100% fertig ist, zeige den Blitz!
+                if (isCached || progress === 100) { name = `YOMI [⚡ TB]\n🎥 ${res}`; binge = null; }
                 else if (progress !== undefined) { name = `YOMI [⏳ ${progress}% TB]\n🎥 ${res}`; binge = null; }
                 else { name = `YOMI [☁️ TB DL]\n🎥 ${res}`; binge = `tb_dl_${t.hash}`; }
 
