@@ -15,13 +15,18 @@ app.use((req, res, next) => {
     next();
 });
 
+// ============================================================================
+// CORE ROUTING & STATIC FILES
+// ============================================================================
+
 // Health Check Endpoint
-// Prevents the application from spinning down on PaaS platforms like Koyeb
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
 });
 
 // Register static folders
+// express.static automatically handles 206 Partial Content (Byte-Range requests).
+// This streams the waiting.mp4 directly from disk, saving precious RAM on a 512MB Koyeb instance.
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'static')));
 
@@ -29,8 +34,7 @@ app.use(express.static(path.join(__dirname, 'static')));
 app.get('/configure', (req, res) => res.redirect('/'));
 app.get('/:config/configure', (req, res) => res.redirect('/'));
 
-// DYNAMIC CATALOG INTERCEPTOR
-// Filters out "Trending" and "Top Rated" catalogs if the user opted out in the UI
+// DYNAMIC CATALOG INTERCEPTOR & INSTALL
 app.get('/:config/manifest.json', (req, res, next) => {
     try {
         const configStr = req.params.config;
@@ -39,17 +43,14 @@ app.get('/:config/manifest.json', (req, res, next) => {
         const config = parseConfig(configStr);
         if (!config || Object.keys(config).length === 0) return next();
 
-        // Create a deep copy of the original manifest for modification
         const dynamicManifest = JSON.parse(JSON.stringify(manifest));
         
-
         if (dynamicManifest.behaviorHints) {
             dynamicManifest.behaviorHints.configurationRequired = false;
         }
 
         const catalogs = [];
         
-        // Push catalogs only if the user allowed them (default is true)
         if (config.showTrending !== false) {
             catalogs.push({ id: 'sukebei_trending', type: 'movie', name: 'Trending' });
         }
@@ -57,7 +58,6 @@ app.get('/:config/manifest.json', (req, res, next) => {
             catalogs.push({ id: 'sukebei_top', type: 'movie', name: 'Top Rated' });
         }
         
-        // The search catalog is always mandatory
         catalogs.push({ 
             type: "movie", 
             id: "sukebei_search", 
@@ -67,22 +67,30 @@ app.get('/:config/manifest.json', (req, res, next) => {
 
         dynamicManifest.catalogs = catalogs;
         
-        // Stremio Web expects proper CORS headers for the manifest file
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Headers', '*');
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.json(dynamicManifest);
     } catch (e) {
-        // Fallback to the standard Stremio router on error
         next(); 
     }
 });
 
-// Standard Stremio router handles everything else
 app.use('/', getRouter(addonInterface));
 
-function serveLoadingVideo(res) {
-    res.redirect('http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4');
+// ============================================================================
+// STREAM RESOLVER & WAITING VIDEO
+// ============================================================================
+
+// DYNAMIC WAITING VIDEO REDIRECT
+// Resolves the correct protocol and host to prevent Mixed Content (HTTP on HTTPS) errors.
+// Redirects Stremio to the locally hosted waiting.mp4 file.
+function serveLoadingVideo(req, res) {
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const host = req.headers.host;
+    const videoUrl = `${protocol}://${host}/waiting.mp4`;
+    console.log(`[RESOLVE] Torrent not cached. Redirecting to SSD video stream: ${videoUrl}`);
+    res.redirect(videoUrl);
 }
 
 app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
@@ -118,7 +126,7 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
                         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/x-www-form-urlencoded" }
                     });
                 }
-                return serveLoadingVideo(res);
+                return serveLoadingVideo(req, res);
             }
 
             const freshInfo = await axios.get(`https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`, { 
@@ -147,13 +155,14 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
                 torrent = newListRes.data.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
             }
 
-            if (!torrent || torrent.download_state !== "completed") return serveLoadingVideo(res);
+            if (!torrent || torrent.download_state !== "completed") return serveLoadingVideo(req, res);
 
             const dlRes = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&torrent_id=${torrent.id}`);
             return res.redirect(dlRes.data.data);
         }
     } catch (e) {
-        return serveLoadingVideo(res);
+        console.error("[RESOLVE ERROR]", e.message);
+        return serveLoadingVideo(req, res);
     }
 });
 
