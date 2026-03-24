@@ -26,13 +26,9 @@
   </a>
 </div>
 
----
-
-> [!CAUTION]
+> [!IMPORTANT]
 > ### 🔒 Privacy & Zero-Knowledge Security
-> Yomi is built on a **Stateless Architecture**. Unlike other addons, your sensitive data never touches a database:
->
-> * **Zero Database Storage:** This addon has no database. Your API keys are never saved on the server.
+> * Yomi is built on a **Stateless Architecture**. Unlike other addons, your sensitive data never touches a database.
 > * **URL-Encoded Config:** Your Debrid keys are stored exclusively in your personal Manifest URL. Stremio handles the synchronization across your devices.
 > * **Direct Resolution:** Stream links are resolved on-the-fly and redirected directly to your player.
 > * **100% Open Source:** Your security is paramount. Verify the code yourself—everything is public.
@@ -58,7 +54,7 @@ Yomi provides real-time feedback on your Debrid downloads directly inside the St
 3.  **Search:** Use the global Stremio search. Results will appear under the **"Yomi Search"** catalog.
 
 > [!IMPORTANT]
-> **Stateless Sync:** Because your keys are part of the URL, you only need to configure the addon **once**. Stremio will automatically sync your "Sukebei Gateway" to your Phone, Tablet, and TV.
+> **Stateless Sync:** Because your keys are part of the URL, you only need to configure the addon **once**. Stremio will automatically sync **Yomi** to your Phone, Tablet, and TV.
 
 ---
 
@@ -66,39 +62,34 @@ Yomi provides real-time feedback on your Debrid downloads directly inside the St
 <summary>💻 <strong>Self-Hosting Instructions (Developers)</strong></summary>
 
 ### Hosting your own Gateway
-Yomi is optimized for PaaS environments like Koyeb. It requires no persistent storage.
+Yomi is optimized for PaaS environments like Koyeb. It requires no persistent storage / Database.
 
 #### 1. Prerequisites
 * **Node.js:** v18 or higher.
-* **No Database Required:** Truly plug-and-play.
 
 #### 2. Deployment (Docker)
-1. **Clone the Repo:** ```bash
-git clone [https://github.com/mralanbourne/Yomi.git](https://github.com/mralanbourne/Yomi.git)
-cd Yomi
+1. **Clone the Repo:** <br />
+```git clone [https://github.com/mralanbourne/Yomi.git](https://github.com/mralanbourne/Yomi.git)``` <br />
+```cd Yomi```
 
     Build and Run:
 
-Bash
-
-docker build -t yomi-addon .
-docker run -p 7000:7000 yomi-addon
+```docker build -t yomi-addon``` <br />
+```docker run -p 7000:7000 yomi-addon```
 
     Environment Variables:
 
         PORT: Defaults to 7000.
 
 </details>
-☕ Support
 
+### ☕ Support
 I maintain this instance for the community. If you enjoy unrestricted access to the Sukebei District, consider supporting the development!
-
 <p align="center">
 <a href="https://ko-fi.com/mralanbourne" target="_blank">
 <img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" height="45" alt="Buy Me a Coffee at ko-fi.com" />
 </a>
 </p>
-
 <p align="center">
 Made with 🖤 for the Underground Community.
 </p>
