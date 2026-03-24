@@ -13,28 +13,22 @@ app.use(express.static(path.join(__dirname, 'static')));
 app.get('/health', (req, res) => res.status(200).json({ status: 'alive' }));
 app.get('/configure', (req, res) => res.redirect('/'));
 
-// SMART SELECTOR: Erkennt Episoden in Torrent-Batches
+// SMART SELECTOR: Picks correct episode in Batch Torrents
 function selectBestFile(files, requestedEp) {
     if (!files || !files.length) return null;
     const epNum = parseInt(requestedEp);
     const epPadded = epNum < 10 ? `0${epNum}` : `${epNum}`;
-    
-    // Regex für: E02, Ep.2, 02, [02], Folge 2
     const epRegex = new RegExp(`[EePp._\\s\\-\\[]${epNum}\\b|[Ee]pisode\\s*${epNum}\\b|\\b${epPadded}\\b`, 'i');
 
     const videoFiles = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name || f.path || ""));
-    
-    // 1. Priorität: Exakter Episoden-Match
     const matches = videoFiles.filter(f => epRegex.test(f.name || f.path || ""));
     if (matches.length > 0) {
         return matches.sort((a, b) => (b.size || b.bytes || 0) - (a.size || a.bytes || 0))[0];
     }
-
-    // 2. Priorität: Größte Videodatei (Fallback für Movies)
     return videoFiles.sort((a, b) => (b.size || b.bytes || 0) - (a.size || a.bytes || 0))[0];
 }
 
-// SUBTITLE PROXY: Lädt Untertitel aus der Cloud und serviert sie an Stremio
+// SUBTITLE PROXY: Serves external subs directly from Cloud
 app.get('/sub/:provider/:apiKey/:hash/:fileId', async (req, res) => {
     const { provider, apiKey, hash, fileId } = req.params;
     try {
