@@ -5,10 +5,10 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 
 const manifest = {
     id: "org.community.yomi",
-    version: "1.0.0",
+    version: "1.3.0",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
-    description: "The Forbidden Gateway to Sukebei",
+    description: "Ultra-Smart Content-Aware Gateway. Dynamic Episode Lists & Subtitle Proxying.",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["anilist:", "sukebei:"],
@@ -17,7 +17,7 @@ const manifest = {
         { id: "sukebei_top", type: "movie", name: "Top Rated" },
         { id: "sukebei_search", type: "movie", name: "Yomi Search", extra: [{ name: "search", isRequired: true }] }
     ],
-    config: [{ key: "apiKey", type: "text", title: "API Key", required: true }],
+    config: [{ key: "apiKey", type: "text", title: "API Key (RD or TB)", required: true }],
     behaviorHints: { configurable: true, configurationRequired: true }
 };
 
@@ -31,82 +31,48 @@ function parseConfig(config) {
     }
 }
 
-function parseSizeToBytes(sizeStr) {
-    if (!sizeStr) return 0;
-    const match = sizeStr.match(/([\d.]+)\s*(GiB|MiB|KiB|GB|MB|KB)/i);
-    if (!match) return 0;
-    const val = parseFloat(match[1]);
-    const unit = match[2].toLowerCase();
-    if (unit.includes('g')) return val * 1073741824;
-    if (unit.includes('m')) return val * 1048576;
-    return val;
+// Helfer: Erkennt Episodennummern in Dateinamen
+function parseEpisodeNumber(filename) {
+    const match = filename.match(/[EePp._\s\-\[](\d{1,3})\b/);
+    return match ? parseInt(match[1]) : null;
 }
 
-function extractTags(title) {
-    let res = "SD";
-    if (/(1080p|1080|FHD)/i.test(title)) res = "1080p";
-    else if (/(720p|720|HD)/i.test(title)) res = "720p";
-    else if (/(2160p|4k|UHD)/i.test(title)) res = "4K";
-    let lang = "Raw";
-    if (/(eng|english)/i.test(title)) lang = "Eng Sub";
-    else if (/(multi|dual)/i.test(title)) lang = "Multi";
-    else if (/(sub)/i.test(title)) lang = "Subbed";
-    if (/(uncensored|decensored)/i.test(title)) lang += " | Uncen";
-    return { res, lang };
-}
+builder.defineMetaHandler(async ({ id, config }) => {
+    const userConfig = parseConfig(config);
+    let meta = null;
 
-function sanitizeSearchQuery(title) {
-    return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
-}
-
-builder.defineCatalogHandler(async ({ id, extra }) => {
-    if (id === "sukebei_trending") return { metas: await getTrendingAdultAnime(), cacheMaxAge: 43200 };
-    if (id === "sukebei_top") return { metas: await getTopAdultAnime(), cacheMaxAge: 43200 };
-    if (id === "sukebei_search" && extra.search) {
-        const [anilistMetas, sukebeiTorrents] = await Promise.all([searchAdultAnime(extra.search), searchSukebeiForHentai(extra.search)]);
-        const finalMetas = [...anilistMetas];
-        const rawGroups = {};
-        sukebeiTorrents.forEach(t => {
-            const cleanName = cleanTorrentTitle(t.title);
-            if (cleanName.length > 2 && !rawGroups[cleanName]) rawGroups[cleanName] = t;
-        });
-        Object.keys(rawGroups).forEach(cleanName => {
-            if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
-                finalMetas.push({ id: `sukebei:${Buffer.from(cleanName).toString('base64url')}`, type: 'movie', name: cleanName, poster: "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ARESULT" });
-            }
-        });
-        return { metas: finalMetas, cacheMaxAge: finalMetas.length === 0 ? 60 : 86400 };
-    }
-    return { metas: [] };
-});
-
-builder.defineMetaHandler(async ({ id }) => {
     if (id.startsWith('anilist:')) {
-        const meta = await getAnimeMeta(id.split(':')[1]);
-        if (meta && meta.type === 'series') {
-            const videos = [];
-            for (let i = 1; i <= (meta.episodes || 1); i++) {
-                videos.push({ id: `${id}:1:${i}`, title: `Episode ${i}`, season: 1, episode: i, released: new Date().toISOString() });
-            }
-            meta.videos = videos;
-        }
-        return { meta, cacheMaxAge: 604800 };
+        const parts = id.split(':');
+        meta = await getAnimeMeta(parts[1]);
+        if (!meta) meta = { id, type: 'series', name: Buffer.from(parts[2], 'base64url').toString('utf8'), episodes: 24 };
     } else if (id.startsWith('sukebei:')) {
-        return { meta: { id, type: 'movie', name: Buffer.from(id.split(':')[1], 'base64url').toString('utf8'), poster: "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ARESULT" }, cacheMaxAge: 604800 };
+        const title = Buffer.from(id.split(':')[1], 'base64url').toString('utf8');
+        meta = { id, type: 'series', name: title, episodes: 24 };
     }
-    return { meta: { id, type: "movie", name: "Not found" } };
+
+    if (meta && meta.type === 'series') {
+        const videos = [];
+        // Wir bieten standardmäßig 24 Slots an, der Resolver übernimmt das feine Mapping.
+        for (let i = 1; i <= (meta.episodes || 24); i++) {
+            videos.push({ id: `${id}:1:${i}`, title: `Episode ${i}`, season: 1, episode: i, released: new Date().toISOString() });
+        }
+        meta.videos = videos;
+    }
+    return { meta: meta || { id, type: "movie", name: "Not found" }, cacheMaxAge: 604800 };
 });
 
 builder.defineStreamHandler(async ({ id, config }) => {
     const userConfig = parseConfig(config);
-    let searchTitle = "", requestedEpisode = 1;
+    let searchTitle = "", requestedEp = 1;
+    
+    // Parse Requested Content
     if (id.startsWith('anilist:')) {
         const parts = id.split(':');
-        searchTitle = sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8'));
-        if (parts.length >= 5) requestedEpisode = parseInt(parts[4]);
-        if (parts.length >= 5) searchTitle += ` ${requestedEpisode < 10 ? '0'+requestedEpisode : requestedEpisode}`;
+        searchTitle = Buffer.from(parts[2], 'base64url').toString('utf8').replace(/\(.*?\)/g, '').trim();
+        if (parts.length >= 5) requestedEp = parseInt(parts[4]);
     } else if (id.startsWith('sukebei:')) {
-        searchTitle = sanitizeSearchQuery(Buffer.from(id.split(':')[1], 'base64url').toString('utf8'));
+        searchTitle = Buffer.from(id.split(':')[1], 'base64url').toString('utf8');
+        if (id.split(':').length >= 4) requestedEp = parseInt(id.split(':')[3]);
     }
 
     const torrents = await searchSukebeiForHentai(searchTitle);
@@ -122,20 +88,50 @@ builder.defineStreamHandler(async ({ id, config }) => {
 
     const streams = [];
     torrents.forEach(t => {
-        const { res, lang } = extractTags(t.title);
-        const bytes = parseSizeToBytes(t.size);
-        const desc = `🌐 Sukebei Network\n💾 ${t.size} | 👤 ${t.seeders} | 🗣️ ${lang}\n📄 ${t.title}`;
+        const bytes = parseFloat(t.size) * 1024 * 1024 * 1024;
+        const descBase = `🌐 Sukebei Network\n💾 ${t.size} | 👤 ${t.seeders}`;
+        
+        // Subtitle Finder Proxy
+        const buildSubs = (fileList, provider, apiKey) => {
+            if (!fileList) return [];
+            return fileList
+                .filter(f => /\.(ass|srt|ssa|vtt)$/i.test(f.name))
+                .map(f => ({
+                    id: f.id,
+                    url: `${process.env.BASE_URL}/sub/${provider}/${apiKey}/${t.hash}/${f.id}`,
+                    lang: f.name.toLowerCase().includes('ger') ? 'German' : 'English'
+                }));
+        };
 
-        if (userConfig.rdKey) {
-            const prog = rdA[t.hash];
-            const name = (rdC[t.hash] || prog === 100) ? `YOMI [⚡ RD]\n🎥 ${res}` : (prog !== undefined ? `YOMI [⏳ ${prog}% RD]\n🎥 ${res}` : `YOMI [☁️ RD DL]\n🎥 ${res}`);
-            streams.push({ name, title: desc, url: `${process.env.BASE_URL}/resolve/realdebrid/${userConfig.rdKey}/${t.hash}/${requestedEpisode}`, behaviorHints: { notWebReady: true, bingeGroup: `rd_${t.hash}` }, _bytes: bytes });
-        }
-        if (userConfig.tbKey) {
-            const prog = tbA[t.hash];
-            const name = (tbC[t.hash] || prog === 100) ? `YOMI [⚡ TB]\n🎥 ${res}` : (prog !== undefined ? `YOMI [⏳ ${prog}% TB]\n🎥 ${res}` : `YOMI [☁️ TB DL]\n🎥 ${res}`);
-            streams.push({ name, title: desc, url: `${process.env.BASE_URL}/resolve/torbox/${userConfig.tbKey}/${t.hash}/${requestedEpisode}`, behaviorHints: { notWebReady: true, bingeGroup: `tb_${t.hash}` }, _bytes: bytes });
-        }
+        const addStream = (provider, cache, active, apiKey, label) => {
+            const files = cache[t.hash.toLowerCase()];
+            const prog = active[t.hash.toLowerCase()];
+            
+            let name = `YOMI [☁️ ${label} DL]`;
+            if (files || prog === 100) name = `YOMI [⚡ ${label}]`;
+            else if (prog !== undefined) name = `YOMI [⏳ ${prog}% ${label}]`;
+
+            // Smart Title: Wenn im Cache, zeige den echten Dateinamen für diese Episode
+            let displayTitle = descBase + `\n📄 ${t.title}`;
+            if (files) {
+                const epPadded = requestedEp < 10 ? `0${requestedEp}` : `${requestedEp}`;
+                const epRegex = new RegExp(`[EePp._\\s\\-\\[]${requestedEp}\\b|\\b${epPadded}\\b`, 'i');
+                const match = files.find(f => /\.(mkv|mp4|avi)$/i.test(f.name) && epRegex.test(f.name));
+                if (match) displayTitle = descBase + `\n🎯 Detected: ${match.name}`;
+            }
+
+            streams.push({
+                name,
+                title: displayTitle,
+                url: `${process.env.BASE_URL}/resolve/${provider}/${apiKey}/${t.hash}/${requestedEp}`,
+                subtitles: buildSubs(files, provider, apiKey),
+                behaviorHints: { notWebReady: true, bingeGroup: `${label}_${t.hash}` },
+                _bytes: bytes
+            });
+        };
+
+        if (userConfig.rdKey) addStream('realdebrid', rdC, rdA, userConfig.rdKey, 'RD');
+        if (userConfig.tbKey) addStream('torbox', tbC, tbA, userConfig.tbKey, 'TB');
     });
 
     return { streams: streams.sort((a,b) => (a.name.includes('⚡') ? -1 : 1) || (b._bytes - a._bytes)), cacheMaxAge: 5 };
