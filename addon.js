@@ -73,28 +73,22 @@ function sanitizeSearchQuery(title) {
 }
 
 builder.defineCatalogHandler(async ({ id, extra }) => {
-    
     if (id === "sukebei_trending") {
         const metas = await getTrendingAdultAnime();
         return { metas, cacheMaxAge: 43200 };
     }
-
     if (id === "sukebei_top") {
         const metas = await getTopAdultAnime();
         return { metas, cacheMaxAge: 43200 };
     }
-
     if (id === "sukebei_search" && extra.search) {
         if (extra.search.length < 3) return { metas: [] };
-
         const [anilistMetas, sukebeiTorrents] = await Promise.all([
             searchAdultAnime(extra.search),
             searchSukebeiForHentai(extra.search)
         ]);
-
         const finalMetas = [...anilistMetas];
         const rawGroups = {};
-
         sukebeiTorrents.forEach(t => {
             const cleanName = cleanTorrentTitle(t.title);
             if (cleanName.length > 2) {
@@ -102,27 +96,22 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
                 rawGroups[cleanName].push(t);
             }
         });
-
         for (const [cleanName, torrents] of Object.entries(rawGroups)) {
             const existsInAnilist = anilistMetas.some(m => 
                 m.name.toLowerCase().includes(cleanName.toLowerCase()) || 
                 cleanName.toLowerCase().includes(m.name.toLowerCase())
             );
-            
             if (!existsInAnilist) {
                 const base64Title = Buffer.from(cleanName).toString('base64url');
-                const placeholderUrl = "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ASUKEBEI%0ARESULT";
-                
                 finalMetas.push({
                     id: `sukebei:${base64Title}`,
                     type: 'movie',
                     name: cleanName,
-                    poster: placeholderUrl,
+                    poster: "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ASUKEBEI%0ARESULT",
                     description: "Direct search result from the Sukebei network."
                 });
             }
         }
-        
         const cacheAge = finalMetas.length === 0 ? 60 : 86400;
         return { metas: finalMetas, cacheMaxAge: cacheAge };
     }
@@ -138,20 +127,17 @@ builder.defineMetaHandler(async ({ id }) => {
     else if (id.startsWith('sukebei:')) {
         const base64Title = id.split(':')[1];
         const cleanName = Buffer.from(base64Title, 'base64url').toString('utf8');
-        const placeholderUrl = "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ASUKEBEI%0ARESULT";
-        
         return { 
             meta: {
                 id: id,
                 type: 'movie',
                 name: cleanName,
-                poster: placeholderUrl,
+                poster: "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ASUKEBEI%0ARESULT",
                 description: "Direct search result from the Sukebei network."
             }, 
             cacheMaxAge: 604800 
         };
     }
-    
     return { meta: { id: id, type: "movie", name: "Not found" } }; 
 });
 
@@ -161,29 +147,28 @@ builder.defineStreamHandler(async ({ id, config }) => {
 
     try {
         let searchTitle = "";
+        let requestedEpisode = 1;
 
         if (id.startsWith('anilist:')) {
             const idParts = id.split(':');
             if (idParts.length < 3) return { streams: [] };
-            
             let rawTitle = Buffer.from(idParts[2], 'base64url').toString('utf8');
             searchTitle = sanitizeSearchQuery(rawTitle);
             
+            // Extrahiere Episodennummer für Serien
             if (idParts.length >= 5) {
-                const epNumber = parseInt(idParts[4], 10);
-                const epString = epNumber < 10 ? `0${epNumber}` : `${epNumber}`;
+                requestedEpisode = parseInt(idParts[4], 10);
+                const epString = requestedEpisode < 10 ? `0${requestedEpisode}` : `${requestedEpisode}`;
                 searchTitle = `${searchTitle} ${epString}`;
             }
         } else if (id.startsWith('sukebei:')) {
             const idParts = id.split(':');
             if (idParts.length < 2) return { streams: [] };
-            
             let rawTitle = Buffer.from(idParts[1], 'base64url').toString('utf8');
             searchTitle = sanitizeSearchQuery(rawTitle);
-            
             if (idParts.length >= 4) {
-                const epNumber = parseInt(idParts[3], 10);
-                const epString = epNumber < 10 ? `0${epNumber}` : `${epNumber}`;
+                requestedEpisode = parseInt(idParts[3], 10);
+                const epString = requestedEpisode < 10 ? `0${requestedEpisode}` : `${requestedEpisode}`;
                 searchTitle = `${searchTitle} ${epString}`;
             }
         } else {
@@ -191,11 +176,9 @@ builder.defineStreamHandler(async ({ id, config }) => {
         }
 
         const torrents = await searchSukebeiForHentai(searchTitle);
-        
         if (torrents.length === 0) return { streams: [], cacheMaxAge: 60 }; 
 
         const hashes = torrents.map(t => t.hash);
-        
         const [rdCached, tbCached, rdActive, tbActive] = await Promise.all([
             userConfig.rdKey ? checkRD(hashes, userConfig.rdKey) : Promise.resolve([]),
             userConfig.tbKey ? checkTorbox(hashes, userConfig.tbKey) : Promise.resolve([]),
@@ -207,14 +190,12 @@ builder.defineStreamHandler(async ({ id, config }) => {
         torrents.forEach(t => {
             const { res, lang } = extractTags(t.title);
             const bytes = parseSizeToBytes(t.size);
-            
             const streamDescription = `🌐 Sukebei Network\n💾 ${t.size}  |  👤 ${t.seeders}  |  🗣️ ${lang}\n📄 ${t.title}`;
 
             if (userConfig.rdKey) {
                 const isCached = rdCached.includes(t.hash);
                 const progress = rdActive[t.hash];
                 let name, binge;
-                // FIX: Wenn der Torrent auf dem Dashboard existiert und 100% fertig ist, zeige den Blitz!
                 if (isCached || progress === 100) { name = `YOMI [⚡ RD]\n🎥 ${res}`; binge = null; }
                 else if (progress !== undefined) { name = `YOMI [⏳ ${progress}% RD]\n🎥 ${res}`; binge = null; }
                 else { name = `YOMI [☁️ RD DL]\n🎥 ${res}`; binge = `rd_dl_${t.hash}`; }
@@ -222,7 +203,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 streams.push({
                     name: name,
                     title: streamDescription,
-                    url: `${process.env.BASE_URL || 'http://127.0.0.1:7000'}/resolve/realdebrid/${userConfig.rdKey}/${t.hash}`,
+                    // WICHTIG: Episode wird jetzt als Parameter an den Resolver übergeben
+                    url: `${process.env.BASE_URL || 'http://127.0.0.1:7000'}/resolve/realdebrid/${userConfig.rdKey}/${t.hash}/${requestedEpisode}`,
                     behaviorHints: { notWebReady: true, bingeGroup: binge },
                     _bytes: bytes 
                 });
@@ -232,7 +214,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 const isCached = tbCached.includes(t.hash);
                 const progress = tbActive[t.hash];
                 let name, binge;
-                // FIX: Wenn der Torrent auf dem Dashboard existiert und 100% fertig ist, zeige den Blitz!
                 if (isCached || progress === 100) { name = `YOMI [⚡ TB]\n🎥 ${res}`; binge = null; }
                 else if (progress !== undefined) { name = `YOMI [⏳ ${progress}% TB]\n🎥 ${res}`; binge = null; }
                 else { name = `YOMI [☁️ TB DL]\n🎥 ${res}`; binge = `tb_dl_${t.hash}`; }
@@ -240,7 +221,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 streams.push({
                     name: name,
                     title: streamDescription,
-                    url: `${process.env.BASE_URL || 'http://127.0.0.1:7000'}/resolve/torbox/${userConfig.tbKey}/${t.hash}`,
+                    // WICHTIG: Episode wird jetzt als Parameter an den Resolver übergeben
+                    url: `${process.env.BASE_URL || 'http://127.0.0.1:7000'}/resolve/torbox/${userConfig.tbKey}/${t.hash}/${requestedEpisode}`,
                     behaviorHints: { notWebReady: true, bingeGroup: binge },
                     _bytes: bytes 
                 });
