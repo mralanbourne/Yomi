@@ -3,7 +3,9 @@ const express = require('express');
 const path = require('path');
 const axios = require('axios');
 const { getRouter } = require('stremio-addon-sdk');
-const addonInterface = require('./addon');
+
+// Extract modules directly to allow interception for dynamic catalogs
+const { addonInterface, manifest, parseConfig } = require('./addon');
 
 const app = express();
 const port = process.env.PORT || 7000;
@@ -13,16 +15,59 @@ app.use((req, res, next) => {
     next();
 });
 
-
 // Health Check Endpoint
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
 });
 
-// Static Folders
+// Register static folders
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'static')));
 
+// DYNAMIC CATALOG INTERCEPTOR
+// Filters out "Trending" and "Top Rated" catalogs if the user opted out in the UI
+app.get('/:config/manifest.json', (req, res, next) => {
+    try {
+        const configStr = req.params.config;
+        if (!configStr || configStr === 'manifest.json') return next();
+        
+        const config = parseConfig(configStr);
+        if (!config || Object.keys(config).length === 0) return next();
+
+        // Create a deep copy of the original manifest for modification
+        const dynamicManifest = JSON.parse(JSON.stringify(manifest));
+        const catalogs = [];
+        
+        // Push catalogs only if the user allowed them (default is true)
+        if (config.showTrending !== false) {
+            catalogs.push({ id: 'sukebei_trending', type: 'movie', name: 'Trending' });
+        }
+        if (config.showTop !== false) {
+            catalogs.push({ id: 'sukebei_top', type: 'movie', name: 'Top Rated' });
+        }
+        
+        // The search catalog is always mandatory
+        catalogs.push({ 
+            type: "movie", 
+            id: "sukebei_search", 
+            name: "Yomi Search", 
+            extra: [{ name: "search", isRequired: true }] 
+        });
+
+        dynamicManifest.catalogs = catalogs;
+        
+        // Stremio Web expects proper CORS headers for the manifest file
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Headers', '*');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.json(dynamicManifest);
+    } catch (e) {
+        // Fallback to the standard Stremio router on error
+        next(); 
+    }
+});
+
+// Standard Stremio router handles everything else
 app.use('/', getRouter(addonInterface));
 
 function serveLoadingVideo(res) {
