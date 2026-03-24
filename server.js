@@ -4,7 +4,6 @@ const path = require('path');
 const axios = require('axios');
 const { getRouter } = require('stremio-addon-sdk');
 
-// Extract modules directly to allow interception for dynamic catalogs
 const { addonInterface, manifest, parseConfig } = require('./addon');
 
 const app = express();
@@ -16,13 +15,11 @@ app.use((req, res, next) => {
 });
 
 // Health Check Endpoint
-// Prevents the application from spinning down on PaaS platforms like Koyeb
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
 });
 
 // Register static folders
-// express.static handles Byte-Range requests perfectly for our local waiting.mp4
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'static')));
 
@@ -78,7 +75,6 @@ app.use('/', getRouter(addonInterface));
 // LOCAL VIDEO REDIRECT
 // ============================================================================
 function serveLoadingVideo(req, res) {
-    // Generate the correct URL dynamically for the local server (handling HTTP/HTTPS)
     const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
     const host = req.headers.host;
     const videoUrl = `${protocol}://${host}/waiting.mp4`;
@@ -93,6 +89,7 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
     console.log(`[RESOLVE] Provider: ${provider}, Hash: ${hash}`);
 
     try {
+        // --- REAL DEBRID RESOLVER ---
         if (provider === "realdebrid") {
             let torrentId = null;
             const listRes = await axios.get('https://api.real-debrid.com/rest/1.0/torrents', {
@@ -134,6 +131,7 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
             return res.redirect(unrestrict.data.download);
         }
         
+        // --- TORBOX RESOLVER ---
         if (provider === "torbox") {
             const listRes = await axios.get('https://api.torbox.app/v1/api/torrents/me', { headers: { Authorization: `Bearer ${apiKey}` } });
             let torrent = listRes.data.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
@@ -149,23 +147,25 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
                 torrent = newListRes.data.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
             }
 
-            if (!torrent || torrent.download_state !== "completed") return serveLoadingVideo(req, res);
+            // Torbox status check
+            if (!torrent || (torrent.download_state !== "completed" && torrent.download_state !== "cached")) {
+                return serveLoadingVideo(req, res);
+            }
 
             // ==========================================
-            // FIX: File ID Selection for Torbox API
+            // FIX: File ID Selection & Header Auth for Torbox
             // ==========================================
-            // Torbox requires a specific file_id to generate a stream URL.
-            // We sort the files array by size and pick the largest one to ensure we don't accidentally stream an .nfo or cover image.
-            let fileId = 1; // Fallback in case the array is somehow empty
+            let fileId = 1; 
             if (torrent.files && torrent.files.length > 0) {
                 const biggestFile = torrent.files.sort((a, b) => b.size - a.size)[0];
                 fileId = biggestFile.id;
             }
 
-            // Append file_id to the requestdl endpoint
-            const dlRes = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&torrent_id=${torrent.id}&file_id=${fileId}`);
+            // Torbox needs the API Key sent as a Bearer Token in the headers
+            const dlRes = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?torrent_id=${torrent.id}&file_id=${fileId}`, {
+                headers: { Authorization: `Bearer ${apiKey}` }
+            });
             
-            // Redirect Stremio to the final generated stream URL
             return res.redirect(dlRes.data.data);
         }
     } catch (e) {
