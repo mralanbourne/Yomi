@@ -3,6 +3,7 @@ const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime 
 const { searchSukebeiForHentai, cleanTorrentTitle } = require('./lib/sukebei');
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/debrid');
 
+// predefine the catalogs here, but they will be dynamically filtered by server.js later
 const manifest = {
     id: "org.community.yomi",
     version: "1.0.0",
@@ -73,12 +74,12 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
     
     if (id === "sukebei_trending") {
         const metas = await getTrendingAdultAnime();
-        return { metas, cacheMaxAge: 43200 }; 
+        return { metas, cacheMaxAge: 43200 }; // 12h Cache
     }
 
     if (id === "sukebei_top") {
         const metas = await getTopAdultAnime();
-        return { metas, cacheMaxAge: 43200 }; 
+        return { metas, cacheMaxAge: 43200 }; // 12h Cache
     }
 
     if (id === "sukebei_search" && extra.search) {
@@ -120,6 +121,7 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
             }
         }
         
+        // SMART CACHE: If results are empty (e.g. timeout), cache for only 1 minute
         const cacheAge = finalMetas.length === 0 ? 60 : 86400;
         return { metas: finalMetas, cacheMaxAge: cacheAge };
     }
@@ -167,11 +169,10 @@ builder.defineStreamHandler(async ({ id, config }) => {
             if (idParts.length < 3) return { streams: [] };
             searchTitle = Buffer.from(idParts[2], 'base64url').toString('utf8');
             
-            // Wenn es eine Serie ist (Stremio ID Format: anilist:id:base64:season:episode)
+            // Handle series episodes (Stremio format: anilist:id:base64:season:episode)
             if (idParts.length >= 5) {
                 const epNumber = parseInt(idParts[4], 10);
                 const epString = epNumber < 10 ? `0${epNumber}` : `${epNumber}`;
-                // Hängt die Episode an die Suche an (z.B. "Mankitsu Happening 02")
                 searchTitle = `${searchTitle} ${epString}`;
             }
         } else if (id.startsWith('sukebei:')) {
@@ -179,7 +180,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             if (idParts.length < 2) return { streams: [] };
             searchTitle = Buffer.from(idParts[1], 'base64url').toString('utf8');
             
-            // Fallback für Sukebei Raw Serien
+            // Fallback for Sukebei raw series
             if (idParts.length >= 4) {
                 const epNumber = parseInt(idParts[3], 10);
                 const epString = epNumber < 10 ? `0${epNumber}` : `${epNumber}`;
@@ -190,6 +191,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
         }
 
         const torrents = await searchSukebeiForHentai(searchTitle);
+        // SMART CACHE for streams
         if (torrents.length === 0) return { streams: [], cacheMaxAge: 60 }; 
 
         const hashes = torrents.map(t => t.hash);
@@ -205,8 +207,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
         torrents.forEach(t => {
             const { res, lang } = extractTags(t.title);
             const bytes = parseSizeToBytes(t.size);
-            
-            // NEUES UI FORMAT FÜR STREMIO
             const streamDescription = `🌐 Sukebei Network\n💾 ${t.size}  |  👤 ${t.seeders}  |  🗣️ ${lang}\n📄 ${t.title}`;
 
             if (userConfig.rdKey) {
