@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://yomi.koyeb.app/yomi_large.png" width="300" alt="Yomi Logo">
+  <img src="https://github.com/mralanbourne/Yomi/blob/main/static/yomi_large.png" width="300" alt="Yomi Logo">
 </p>
 
-<h1 align="center">YOMI: The Forbidden Gateway</h1>
+<h1 align="center">YOMI: Your Forbidden Gateway</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-1.0.0-e91e63.svg" alt="Version">
