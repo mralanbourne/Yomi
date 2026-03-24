@@ -83,12 +83,12 @@ app.get('/:config/manifest.json', (req, res, next) => {
 app.use('/', getRouter(addonInterface));
 
 // ============================================================================
-// EXTERNAL GITHUB RELEASE VIDEO REDIRECT
+// EXTERNAL RELEASE VIDEO REDIRECT
 // ============================================================================
 function serveLoadingVideo(req, res) {
     // The direct GitHub release link provided by the user
-    const externalVideoUrl = "https://github.com/mralanbourne/Yomi/releases/download/video/waiting.mp4";
-    console.log(`[RESOLVE] Torrent not cached. Redirecting to GitHub Release video: ${externalVideoUrl}`);
+    const externalVideoUrl = "https://files.catbox.moe/6408rv.mp4";
+    console.log(`[RESOLVE] Torrent not cached. Redirecting to Catbox video: ${externalVideoUrl}`);
     res.redirect(externalVideoUrl);
 }
 
