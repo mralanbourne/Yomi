@@ -4,7 +4,6 @@ const path = require('path');
 const axios = require('axios');
 const { getRouter } = require('stremio-addon-sdk');
 
-// Extract modules directly to allow interception for dynamic catalogs
 const { addonInterface, manifest, parseConfig } = require('./addon');
 
 const app = express();
@@ -135,37 +134,36 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
         
         // --- TORBOX RESOLVER ---
         if (provider === "torbox") {
-            // FIX: bypass_cache=true
             const listRes = await axios.get('https://api.torbox.app/v1/api/torrents/mylist?bypass_cache=true', { headers: { Authorization: `Bearer ${apiKey}` } });
             let torrent = listRes.data.data ? listRes.data.data.find(t => t.hash.toLowerCase() === hash.toLowerCase()) : null;
             
             if (!torrent) {
                 console.log(`[TORBOX] Torrent not found on dashboard. Pushing magnet now...`);
-                const formParams = new URLSearchParams();
-                formParams.append('magnet', magnet);
-
-                await axios.post('https://api.torbox.app/v1/api/torrents/createtorrent', formParams, { 
+                
+                // FIX: Torbox zwingt uns, multipart/form-data zu nutzen. Hier bauen wir den Payload manuell fehlerfrei auf.
+                const boundary = '----WebKitFormBoundaryYomiTorbox';
+                const payload = `--${boundary}\r\nContent-Disposition: form-data; name="magnet"\r\n\r\n${magnet}\r\n--${boundary}--`;
+                
+                await axios.post('https://api.torbox.app/v1/api/torrents/createtorrent', payload, { 
                     headers: { 
                         Authorization: `Bearer ${apiKey}`,
-                        "Content-Type": "application/x-www-form-urlencoded"
+                        'Content-Type': `multipart/form-data; boundary=${boundary}`
                     } 
                 });
                 
-                // Gib Torbox 1 Sekunde Zeit, den Magnet zu verarbeiten
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 1500));
                 
-                // FIX: bypass_cache=true
                 const newListRes = await axios.get('https://api.torbox.app/v1/api/torrents/mylist?bypass_cache=true', { headers: { Authorization: `Bearer ${apiKey}` } });
                 torrent = newListRes.data.data ? newListRes.data.data.find(t => t.hash.toLowerCase() === hash.toLowerCase()) : null;
             }
 
-            // Torbox status check
             if (!torrent || (torrent.download_state !== "completed" && torrent.download_state !== "cached")) {
                 console.log(`[TORBOX] Torrent status: ${torrent ? torrent.download_state : 'Still processing'}. Serving waiting video.`);
                 return serveLoadingVideo(req, res);
             }
 
-            let fileId = 1; 
+            // FIX: Torbox Datei IDs starten bei 0!
+            let fileId = 0; 
             if (torrent.files && torrent.files.length > 0) {
                 const biggestFile = torrent.files.sort((a, b) => b.size - a.size)[0];
                 fileId = biggestFile.id;
@@ -173,9 +171,7 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
 
             console.log(`[TORBOX] Torrent ready! Requesting direct stream link for file_id: ${fileId}...`);
             
-            // FIX: Torbox verlangt den API Key für den Download als URL-Parameter `token=...`
             const dlRes = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&torrent_id=${torrent.id}&file_id=${fileId}`);
-            
             return res.redirect(dlRes.data.data);
         }
     } catch (e) {
