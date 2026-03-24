@@ -13,22 +13,51 @@ app.use(express.static(path.join(__dirname, 'static')));
 app.get('/health', (req, res) => res.status(200).json({ status: 'alive' }));
 app.get('/configure', (req, res) => res.redirect('/'));
 
-// Sucht die Videodatei passend zur Episode im Torrent
-function selectEpisodeFile(files, requestedEp) {
-    if (!files || files.length === 0) return null;
-    const epNum = parseInt(requestedEp, 10);
-    const epPadded = epNum < 10 ? `0${epNum}` : `${epNum}`;
-    const epRegex = new RegExp(`(?:[Ee]p(?:isode)?\\.?\\s*|\\-\\s*|\\b[Oo][Vv][Aa]\\s*|\\b|_|\\[)(?:0*)${epNum}(?:v\\d)?(?:\\b|_|\\]|\\.)`, 'i');
-
-    const videoFiles = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name || f.path || ""));
-    const matches = videoFiles.filter(f => epRegex.test(f.name || f.path || ""));
-    
-    if (matches.length > 0) return matches.sort((a, b) => (b.size || b.bytes || 0) - (a.size || a.bytes || 0))[0];
-    if (videoFiles.length === 1) return videoFiles[0]; 
-    return videoFiles.sort((a, b) => (b.size || b.bytes || 0) - (a.size || a.bytes || 0))[0]; 
+// SYNCHRONISIERT MIT ADDON.JS CLEANING ENGINE
+function cleanStringForMatching(str) {
+    return str.replace(/\[.*?\]/g, ' ')
+              .replace(/\(.*?\)/g, ' ')
+              .replace(/\b(?:1080|720|480|2160)[pi]\b/gi, ' ')
+              .replace(/\b(?:x|h)26[45]\b/gi, ' ')
+              .replace(/\b(?:HEVC|AVC|FHD|HD|SD)\b/gi, ' ')
+              .trim();
 }
 
-// ROBUSTER SUBTITLE PROXY
+function isEpisodeMatch(name, requestedEp) {
+    const cleanName = cleanStringForMatching(name);
+    const epNum = parseInt(requestedEp, 10);
+    const batchMatch = cleanName.match(/\b0*(\d+)\s*(?:-|~|to)\s*0*(\d+)\b/i);
+    if (batchMatch) {
+        if (epNum >= parseInt(batchMatch[1], 10) && epNum <= parseInt(batchMatch[2], 10)) return true;
+    }
+    const epRegex = new RegExp(`(?:[Ee]p(?:isode)?\\.?\\s*|\\-\\s*|\\b|_)(?:0*)${epNum}(?:v\\d)?\\b`, 'i');
+    if (epRegex.test(cleanName)) return true;
+    if (epNum === 1) {
+        const hasOtherEp = /(?:[Ee]p(?:isode)?\.?\s*|\-\s*|\b|_)(?:0*)([2-9]|[1-9]\d)(?:v\d)?\b/i.test(cleanName);
+        if (!hasOtherEp) return true;
+    }
+    return false;
+}
+
+function selectEpisodeFile(files, requestedEp) {
+    if (!files || files.length === 0) return null;
+    const videoFiles = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name || f.path || ""));
+    const matches = videoFiles.filter(f => isEpisodeMatch(f.name || f.path || "", requestedEp));
+    
+    if (matches.length > 0) {
+        return matches.sort((a, b) => {
+            const nameA = (a.name || a.path || "").toLowerCase();
+            const nameB = (b.name || b.path || "").toLowerCase();
+            const aMkv = nameA.endsWith('.mkv') ? 1 : 0;
+            const bMkv = nameB.endsWith('.mkv') ? 1 : 0;
+            if (aMkv !== bMkv) return bMkv - aMkv;
+            return (b.size || b.bytes || 0) - (a.size || a.bytes || 0);
+        })[0];
+    }
+    return videoFiles.length > 0 ? videoFiles[0] : files[0];
+}
+
+// BULLETPROOF SUBTITLE PROXY
 app.get('/sub/:provider/:apiKey/:hash/:fileId', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
@@ -63,9 +92,7 @@ app.get('/sub/:provider/:apiKey/:hash/:fileId', async (req, res) => {
         const subData = await axios.get(downloadUrl, { responseType: 'arraybuffer' });
         res.set('Content-Type', mime);
         return res.send(subData.data);
-    } catch (e) { 
-        res.status(500).send("Error fetching subtitle"); 
-    }
+    } catch (e) { res.status(500).send("Error fetching subtitle"); }
 });
 
 function serveLoadingVideo(req, res) {
@@ -96,7 +123,7 @@ app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
             }
             const fresh = await axios.get(`https://api.real-debrid.com/rest/1.0/torrents/info/${torrent.id}`, { headers: { Authorization: `Bearer ${apiKey}` } });
             const selIdx = fresh.data.files.findIndex(f => f.selected === 1);
-            const unrestrict = await axios.post('https://api.real-debrid.com/rest/1.0/unrestrict/link', newSearchParams({ link: fresh.data.links[selIdx] || fresh.data.links[0] }), { headers: { Authorization: `Bearer ${apiKey}` } });
+            const unrestrict = await axios.post('https://api.real-debrid.com/rest/1.0/unrestrict/link', new URLSearchParams({ link: fresh.data.links[selIdx] || fresh.data.links[0] }), { headers: { Authorization: `Bearer ${apiKey}` } });
             return res.redirect(unrestrict.data.download);
         }
 
@@ -109,6 +136,7 @@ app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
                 return serveLoadingVideo(req, res);
             }
             if (torrent.download_state !== "completed" && torrent.download_state !== "cached") return serveLoadingVideo(req, res);
+            
             const bestFile = selectEpisodeFile(torrent.files, requestedEp);
             const dl = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&torrent_id=${torrent.id}&file_id=${bestFile ? bestFile.id : 0}`);
             return res.redirect(dl.data.data);
