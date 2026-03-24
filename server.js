@@ -151,7 +151,21 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
 
             if (!torrent || torrent.download_state !== "completed") return serveLoadingVideo(req, res);
 
-            const dlRes = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&torrent_id=${torrent.id}`);
+            // ==========================================
+            // FIX: File ID Selection for Torbox API
+            // ==========================================
+            // Torbox requires a specific file_id to generate a stream URL.
+            // We sort the files array by size and pick the largest one to ensure we don't accidentally stream an .nfo or cover image.
+            let fileId = 1; // Fallback in case the array is somehow empty
+            if (torrent.files && torrent.files.length > 0) {
+                const biggestFile = torrent.files.sort((a, b) => b.size - a.size)[0];
+                fileId = biggestFile.id;
+            }
+
+            // Append file_id to the requestdl endpoint
+            const dlRes = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&torrent_id=${torrent.id}&file_id=${fileId}`);
+            
+            // Redirect Stremio to the final generated stream URL
             return res.redirect(dlRes.data.data);
         }
     } catch (e) {
