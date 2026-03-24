@@ -5,10 +5,10 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 
 const manifest = {
     id: "org.community.yomi",
-    version: "1.3.0",
+    version: "1.3.5",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
-    description: "Ultra-Smart Content-Aware Gateway. Dynamic Episode Lists & Subtitle Proxying.",
+    description: "Ultra-Smart Gateway. Dynamic Content-Based Episode Slots & Subtitle Proxying.",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["anilist:", "sukebei:"],
@@ -31,30 +31,113 @@ function parseConfig(config) {
     }
 }
 
-// Helfer: Erkennt Episodennummern in Dateinamen
-function parseEpisodeNumber(filename) {
-    const match = filename.match(/[EePp._\s\-\[](\d{1,3})\b/);
-    return match ? parseInt(match[1]) : null;
+function parseSizeToBytes(sizeStr) {
+    if (!sizeStr) return 0;
+    const match = sizeStr.match(/([\d.]+)\s*(GiB|MiB|KiB|GB|MB|KB)/i);
+    if (!match) return 0;
+    const val = parseFloat(match[1]);
+    const unit = match[2].toLowerCase();
+    if (unit.includes('g')) return val * 1073741824;
+    if (unit.includes('m')) return val * 1048576;
+    return val;
 }
 
+function extractTags(title) {
+    let res = "SD";
+    if (/(1080p|1080|FHD)/i.test(title)) res = "1080p";
+    else if (/(720p|720|HD)/i.test(title)) res = "720p";
+    else if (/(2160p|4k|UHD)/i.test(title)) res = "4K";
+    let lang = "Raw";
+    if (/(eng|english)/i.test(title)) lang = "Eng Sub";
+    else if (/(multi|dual)/i.test(title)) lang = "Multi";
+    else if (/(sub)/i.test(title)) lang = "Subbed";
+    if (/(uncensored|decensored)/i.test(title)) lang += " | Uncen";
+    return { res, lang };
+}
+
+function sanitizeSearchQuery(title) {
+    return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
+}
+
+// --- CATALOG HANDLER ---
+builder.defineCatalogHandler(async ({ id, extra }) => {
+    if (id === "sukebei_trending") return { metas: await getTrendingAdultAnime(), cacheMaxAge: 43200 };
+    if (id === "sukebei_top") return { metas: await getTopAdultAnime(), cacheMaxAge: 43200 };
+    if (id === "sukebei_search" && extra.search) {
+        const [anilistMetas, sukebeiTorrents] = await Promise.all([searchAdultAnime(extra.search), searchSukebeiForHentai(extra.search)]);
+        const finalMetas = [...anilistMetas];
+        const rawGroups = {};
+        sukebeiTorrents.forEach(t => {
+            const cleanName = cleanTorrentTitle(t.title);
+            if (cleanName.length > 2 && !rawGroups[cleanName]) rawGroups[cleanName] = t;
+        });
+        Object.keys(rawGroups).forEach(cleanName => {
+            if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
+                finalMetas.push({ 
+                    id: `sukebei:${Buffer.from(cleanName).toString('base64url')}`, 
+                    type: 'series',
+                    name: cleanName, 
+                    poster: "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ARESULT" 
+                });
+            }
+        });
+        return { metas: finalMetas, cacheMaxAge: finalMetas.length === 0 ? 60 : 86400 };
+    }
+    return { metas: [] };
+});
+
+// --- META HANDLER (DYNAMIC EPISODE SLOTS) ---
 builder.defineMetaHandler(async ({ id, config }) => {
     const userConfig = parseConfig(config);
     let meta = null;
+    let titleForSearch = "";
 
     if (id.startsWith('anilist:')) {
         const parts = id.split(':');
         meta = await getAnimeMeta(parts[1]);
-        if (!meta) meta = { id, type: 'series', name: Buffer.from(parts[2], 'base64url').toString('utf8'), episodes: 24 };
+        titleForSearch = meta ? meta.name : Buffer.from(parts[2], 'base64url').toString('utf8');
+        if (!meta) meta = { id, type: 'series', name: titleForSearch, episodes: 1 };
     } else if (id.startsWith('sukebei:')) {
-        const title = Buffer.from(id.split(':')[1], 'base64url').toString('utf8');
-        meta = { id, type: 'series', name: title, episodes: 24 };
+        titleForSearch = Buffer.from(id.split(':')[1], 'base64url').toString('utf8');
+        meta = { id, type: 'series', name: titleForSearch, episodes: 1, poster: "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ARESULT" };
     }
 
-    if (meta && meta.type === 'series') {
+    if (meta) {
         const videos = [];
-        // Wir bieten standardmäßig 24 Slots an, der Resolver übernimmt das feine Mapping.
-        for (let i = 1; i <= (meta.episodes || 24); i++) {
-            videos.push({ id: `${id}:1:${i}`, title: `Episode ${i}`, season: 1, episode: i, released: new Date().toISOString() });
+        // ULTRA-SMART: Find the best torrent, count video files, and name the slots accordingly
+        try {
+            const torrents = await searchSukebeiForHentai(titleForSearch);
+            if (torrents && torrents.length > 0) {
+                const bestTorrent = torrents[0];
+                const [rdC, tbC] = await Promise.all([
+                    userConfig.rdKey ? checkRD([bestTorrent.hash], userConfig.rdKey) : {},
+                    userConfig.tbKey ? checkTorbox([bestTorrent.hash], userConfig.tbKey) : {}
+                ]);
+                
+                const fileList = rdC[bestTorrent.hash.toLowerCase()] || tbC[bestTorrent.hash.toLowerCase()];
+                if (fileList) {
+                    const videoFiles = fileList.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name)).sort((a,b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
+                    if (videoFiles.length > 1) {
+                        videoFiles.forEach((f, index) => {
+                            videos.push({
+                                id: `${id}:1:${index + 1}`,
+                                title: f.name.replace(/\.(mkv|mp4|avi|wmv)$/i, ''),
+                                season: 1,
+                                episode: index + 1,
+                                released: new Date().toISOString()
+                            });
+                        });
+                    }
+                }
+            }
+        } catch (e) { console.error("[Meta Smart Scan Error]", e.message); }
+
+        // Fallback to AniList count or 24 standard slots if no specific files detected
+        if (videos.length === 0) {
+            const count = meta.episodes || 24;
+            for (let i = 1; i <= count; i++) {
+                videos.push({ id: `${id}:1:${i}`, title: `Episode ${i}`, season: 1, episode: i, released: new Date().toISOString() });
+            }
         }
         meta.videos = videos;
     }
@@ -65,13 +148,16 @@ builder.defineStreamHandler(async ({ id, config }) => {
     const userConfig = parseConfig(config);
     let searchTitle = "", requestedEp = 1;
     
-    // Parse Requested Content
     if (id.startsWith('anilist:')) {
         const parts = id.split(':');
-        searchTitle = Buffer.from(parts[2], 'base64url').toString('utf8').replace(/\(.*?\)/g, '').trim();
-        if (parts.length >= 5) requestedEp = parseInt(parts[4]);
+        searchTitle = sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8'));
+        if (parts.length >= 5) {
+            requestedEp = parseInt(parts[4]);
+            searchTitle += ` ${requestedEp < 10 ? '0'+requestedEp : requestedEp}`;
+        }
     } else if (id.startsWith('sukebei:')) {
-        searchTitle = Buffer.from(id.split(':')[1], 'base64url').toString('utf8');
+        const parts = id.split(':');
+        searchTitle = sanitizeSearchQuery(Buffer.from(parts[1], 'base64url').toString('utf8'));
         if (id.split(':').length >= 4) requestedEp = parseInt(id.split(':')[3]);
     }
 
@@ -91,7 +177,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
         const bytes = parseFloat(t.size) * 1024 * 1024 * 1024;
         const descBase = `🌐 Sukebei Network\n💾 ${t.size} | 👤 ${t.seeders}`;
         
-        // Subtitle Finder Proxy
         const buildSubs = (fileList, provider, apiKey) => {
             if (!fileList) return [];
             return fileList
@@ -106,23 +191,20 @@ builder.defineStreamHandler(async ({ id, config }) => {
         const addStream = (provider, cache, active, apiKey, label) => {
             const files = cache[t.hash.toLowerCase()];
             const prog = active[t.hash.toLowerCase()];
-            
             let name = `YOMI [☁️ ${label} DL]`;
             if (files || prog === 100) name = `YOMI [⚡ ${label}]`;
             else if (prog !== undefined) name = `YOMI [⏳ ${prog}% ${label}]`;
 
-            // Smart Title: Wenn im Cache, zeige den echten Dateinamen für diese Episode
             let displayTitle = descBase + `\n📄 ${t.title}`;
             if (files) {
                 const epPadded = requestedEp < 10 ? `0${requestedEp}` : `${requestedEp}`;
                 const epRegex = new RegExp(`[EePp._\\s\\-\\[]${requestedEp}\\b|\\b${epPadded}\\b`, 'i');
                 const match = files.find(f => /\.(mkv|mp4|avi)$/i.test(f.name) && epRegex.test(f.name));
-                if (match) displayTitle = descBase + `\n🎯 Detected: ${match.name}`;
+                if (match) displayTitle = descBase + `\n🎯 Match: ${match.name}`;
             }
 
             streams.push({
-                name,
-                title: displayTitle,
+                name, title: displayTitle,
                 url: `${process.env.BASE_URL}/resolve/${provider}/${apiKey}/${t.hash}/${requestedEp}`,
                 subtitles: buildSubs(files, provider, apiKey),
                 behaviorHints: { notWebReady: true, bingeGroup: `${label}_${t.hash}` },
