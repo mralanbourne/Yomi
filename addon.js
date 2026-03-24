@@ -8,7 +8,7 @@ const manifest = {
     id: "org.community.yomi",
     version: "1.0.0",
     name: "Yomi",
-    logo: "http://127.0.0.1:7000/yomi.png", 
+    logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
     description: "The Forbidden Gateway to Sukebei",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
