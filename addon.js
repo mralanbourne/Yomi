@@ -5,7 +5,7 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 
 const manifest = {
     id: "org.community.yomi",
-    version: "3.7.1",
+    version: "3.7.2",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
     description: "Ultimate Hentai Gateway. Dual-Database (AniList+MAL) & Smart Episode Proxy.",
@@ -53,7 +53,6 @@ function extractTags(title) {
     return { res, lang };
 }
 
-// FIX: DIE FEHLENDE FUNKTION WURDE WIEDER EINGEBAUT!
 function sanitizeSearchQuery(title) {
     return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
@@ -107,6 +106,29 @@ function findEpisodeInFiles(files, requestedEp) {
     return null;
 }
 
+// NEU: Dynamischer Poster-Generator
+function generateDynamicPoster(title) {
+    // Nur Buchstaben & Zahlen, maximal 30 Zeichen, sonst bricht der Text im Bild um
+    let safeTitle = title.replace(/[^a-zA-Z0-9 ]/g, "").substring(0, 30).trim().toUpperCase();
+    let words = safeTitle.split(" ");
+    let lines = [];
+    let line = "";
+    
+    // Bricht den Titel sauber auf mehrere Zeilen um
+    for (let word of words) {
+        if ((line + word).length > 10) {
+            if (line) lines.push(line.trim());
+            line = word + " ";
+        } else {
+            line += word + " ";
+        }
+    }
+    if (line) lines.push(line.trim());
+    
+    const text = encodeURIComponent(lines.join('\n'));
+    return `https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=${text}`;
+}
+
 builder.defineCatalogHandler(async ({ id, extra }) => {
     if (id === "sukebei_trending") return { metas: await getTrendingAdultAnime(), cacheMaxAge: 43200 };
     if (id === "sukebei_top") return { metas: await getTopAdultAnime(), cacheMaxAge: 43200 };
@@ -120,7 +142,12 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
         });
         Object.keys(rawGroups).forEach(cleanName => {
             if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
-                finalMetas.push({ id: `sukebei:${Buffer.from(cleanName).toString('base64url')}`, type: 'series', name: cleanName, poster: "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ARESULT" });
+                finalMetas.push({ 
+                    id: `sukebei:${Buffer.from(cleanName).toString('base64url')}`, 
+                    type: 'series', 
+                    name: cleanName, 
+                    poster: generateDynamicPoster(cleanName) // FIX: Nutzt jetzt den dynamischen Generator
+                });
             }
         });
         return { metas: finalMetas, cacheMaxAge: finalMetas.length === 0 ? 60 : 86400 };
@@ -141,7 +168,6 @@ builder.defineMetaHandler(async ({ id }) => {
         searchTitle = Buffer.from(id.split(':')[1], 'base64url').toString('utf8');
         const cleanQuery = cleanStringForMatching(searchTitle);
         
-        // 1. ZUERST: MyAnimeList Fallback!
         const malData = await getJikanMeta(cleanQuery);
         
         if (malData) {
@@ -149,21 +175,24 @@ builder.defineMetaHandler(async ({ id }) => {
                 id, 
                 type: 'series', 
                 name: searchTitle, 
-                poster: malData.poster || "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=NO+POSTER",
+                poster: malData.poster || generateDynamicPoster(searchTitle),
                 background: malData.background,
                 description: malData.description,
                 episodes: malData.episodes
             };
         } else {
-            // Wenn MAL auch nichts findet, klassischer Raw-Kasten
-            meta = { id, type: 'series', name: searchTitle, poster: "https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=RAW%0ARESULT" };
+            meta = { 
+                id, 
+                type: 'series', 
+                name: searchTitle, 
+                poster: generateDynamicPoster(searchTitle) // FIX: Fallback falls MAL auch nichts hat
+            };
         }
     }
 
     meta.type = 'series';
     let epCount = meta.episodes || 1;
 
-    // Sukebei-Torrent Zähler-Fallback, falls weder AniList noch MAL die Folgenanzahl wissen
     if (epCount === 1 || !meta.episodes) {
         try {
             const torrents = await searchSukebeiForHentai(searchTitle);
@@ -195,7 +224,7 @@ builder.defineMetaHandler(async ({ id }) => {
             season: 1, 
             episode: i, 
             released: new Date().toISOString(),
-            thumbnail: episodeThumbnail // MyAnimeList Bild im Folgenkasten!
+            thumbnail: episodeThumbnail
         });
     }
     meta.videos = videos;
@@ -207,7 +236,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
     const userConfig = parseConfig(config);
     let searchTitle = "", requestedEp = 1;
     
-    // VERWENDUNG DER NUN EXISTIERENDEN FUNKTION
     if (id.startsWith('anilist:')) {
         const parts = id.split(':');
         searchTitle = sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8'));
@@ -241,7 +269,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
             if (!matchedFile) return; 
             displayTitle += `\n🎯 File: ${matchedFile.name}`;
         } else {
-            // Uncached Streams, die nicht zur Episode passen, werden aussortiert
             const cleanTitle = cleanStringForMatching(t.title);
             const epNum = parseInt(requestedEp, 10);
             const epRegex = new RegExp(`(?:[Ee]p(?:isode)?\\.?\\s*|\\-\\s*|\\b|_)(?:0*)${epNum}(?:v\\d)?\\b`, 'i');
@@ -249,7 +276,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             
             if (!isBatch && !epRegex.test(cleanTitle)) {
                 const otherEpRegex = /(?:[Ee]p(?:isode)?\.?\s*|\-\s*|\b|_)(?:0*)([2-9]|[1-9]\d)(?:v\d)?\b/i;
-                if (otherEpRegex.test(cleanTitle) && epNum !== 1) return; // Ausblenden!
+                if (otherEpRegex.test(cleanTitle) && epNum !== 1) return; 
             }
             displayTitle += `\n📄 ${t.title}`;
         }
