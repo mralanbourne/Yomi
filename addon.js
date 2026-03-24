@@ -176,18 +176,13 @@ builder.defineStreamHandler(async ({ id, config }) => {
         let searchTitle = "";
 
         // PARSE ID & EPISODE HANDLING
-        // Anilist streams have the format: anilist:[id]:[base64Title]:[season]:[episode]
         if (id.startsWith('anilist:')) {
             const idParts = id.split(':');
             if (idParts.length < 3) return { streams: [] };
             
-            // 1. Decode base64 title
             let rawTitle = Buffer.from(idParts[2], 'base64url').toString('utf8');
-            
-            // 2. Sanitize title (remove years like "(2019)" which break Sukebei searches)
             searchTitle = sanitizeSearchQuery(rawTitle);
             
-            // 3. Append episode number if it's a series
             if (idParts.length >= 5) {
                 const epNumber = parseInt(idParts[4], 10);
                 const epString = epNumber < 10 ? `0${epNumber}` : `${epNumber}`;
@@ -200,7 +195,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
             let rawTitle = Buffer.from(idParts[1], 'base64url').toString('utf8');
             searchTitle = sanitizeSearchQuery(rawTitle);
             
-            // Fallback for Sukebei raw series
             if (idParts.length >= 4) {
                 const epNumber = parseInt(idParts[3], 10);
                 const epString = epNumber < 10 ? `0${epNumber}` : `${epNumber}`;
@@ -212,12 +206,10 @@ builder.defineStreamHandler(async ({ id, config }) => {
 
         const torrents = await searchSukebeiForHentai(searchTitle);
         
-        // SMART CACHE for streams: do not hard cache empty results
         if (torrents.length === 0) return { streams: [], cacheMaxAge: 60 }; 
 
         const hashes = torrents.map(t => t.hash);
         
-        // Check availability on Debrid providers simultaneously
         const [rdCached, tbCached, rdActive, tbActive] = await Promise.all([
             userConfig.rdKey ? checkRD(hashes, userConfig.rdKey) : Promise.resolve([]),
             userConfig.tbKey ? checkTorbox(hashes, userConfig.tbKey) : Promise.resolve([]),
@@ -230,7 +222,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
             const { res, lang } = extractTags(t.title);
             const bytes = parseSizeToBytes(t.size);
             
-            // Structured stream description for Stremio UI
             const streamDescription = `🌐 Sukebei Network\n💾 ${t.size}  |  👤 ${t.seeders}  |  🗣️ ${lang}\n📄 ${t.title}`;
 
             if (userConfig.rdKey) {
@@ -238,8 +229,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 const progress = rdActive[t.hash];
                 let name, binge;
                 if (isCached) { name = `YOMI [⚡ RD]\n🎥 ${res}`; binge = null; }
-                else if (progress !== undefined) { name = `YOMI [⏳ ${progress}%]\n🎥 ${res}`; binge = null; }
-                else { name = `YOMI [☁️ DL]\n🎥 ${res}`; binge = `rd_dl_${t.hash}`; }
+                else if (progress !== undefined) { name = `YOMI [⏳ ${progress}% RD]\n🎥 ${res}`; binge = null; }
+                else { name = `YOMI [☁️ RD DL]\n🎥 ${res}`; binge = `rd_dl_${t.hash}`; }
 
                 streams.push({
                     name: name,
@@ -255,8 +246,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 const progress = tbActive[t.hash];
                 let name, binge;
                 if (isCached) { name = `YOMI [⚡ TB]\n🎥 ${res}`; binge = null; }
-                else if (progress !== undefined) { name = `YOMI [⏳ ${progress}%]\n🎥 ${res}`; binge = null; }
-                else { name = `YOMI [☁️ DL]\n🎥 ${res}`; binge = `tb_dl_${t.hash}`; }
+                else if (progress !== undefined) { name = `YOMI [⏳ ${progress}% TB]\n🎥 ${res}`; binge = null; }
+                else { name = `YOMI [☁️ TB DL]\n🎥 ${res}`; binge = `tb_dl_${t.hash}`; }
 
                 streams.push({
                     name: name,
@@ -268,7 +259,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
             }
         });
 
-        // Sort by cached status first, then by file size
         streams.sort((a, b) => {
             const aCached = a.name.includes('⚡');
             const bCached = b.name.includes('⚡');
@@ -277,7 +267,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
             return b._bytes - a._bytes;
         });
 
-        // Remove temporary byte sizes used for sorting before returning
         streams.forEach(s => delete s._bytes);
         return { streams: streams, cacheMaxAge: 5 };
     } catch (err) {
@@ -285,7 +274,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
     }
 });
 
-// Export interface, manifest and parser bundled so the server can intercept them
 module.exports = {
     addonInterface: builder.getInterface(),
     manifest,
