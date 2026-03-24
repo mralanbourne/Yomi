@@ -4,6 +4,7 @@ const path = require('path');
 const axios = require('axios');
 const { getRouter } = require('stremio-addon-sdk');
 
+// Extract modules directly to allow interception for dynamic catalogs
 const { addonInterface, manifest, parseConfig } = require('./addon');
 
 const app = express();
@@ -15,11 +16,13 @@ app.use((req, res, next) => {
 });
 
 // Health Check Endpoint
+// Prevents the application from spinning down on PaaS platforms like Koyeb
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
 });
 
 // Register static folders
+// express.static handles Byte-Range requests perfectly for our local waiting.mp4
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'static')));
 
@@ -75,11 +78,12 @@ app.use('/', getRouter(addonInterface));
 // LOCAL VIDEO REDIRECT
 // ============================================================================
 function serveLoadingVideo(req, res) {
+    // Generate the correct URL dynamically for the local server (handling HTTP/HTTPS)
     const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
     const host = req.headers.host;
     const videoUrl = `${protocol}://${host}/waiting.mp4`;
     
-    console.log(`[RESOLVE] Torrent not cached. Serving local SSD video: ${videoUrl}`);
+    console.log(`[RESOLVE] Torrent not ready. Serving local SSD video: ${videoUrl}`);
     res.redirect(videoUrl);
 }
 
@@ -100,6 +104,7 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
             if (existingTorrent) {
                 torrentId = existingTorrent.id;
             } else {
+                console.log(`[REAL-DEBRID] Adding new magnet to dashboard...`);
                 const addRes = await axios.post('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', new URLSearchParams({ magnet }), {
                     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/x-www-form-urlencoded" }
                 });
@@ -137,31 +142,34 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
             let torrent = listRes.data.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
             
             if (!torrent) {
-                const FormData = require('form-data');
-                const data = new FormData();
-                data.append('magnet', magnet);
-                await axios.post('https://api.torbox.app/v1/api/torrents/createtorrent', data, { 
-                    headers: { ...data.getHeaders(), Authorization: `Bearer ${apiKey}` } 
+                console.log(`[TORBOX] Torrent not found on dashboard. Pushing magnet now...`);
+                
+                await axios.post('https://api.torbox.app/v1/api/torrents/createtorrent', new URLSearchParams({ magnet }), { 
+                    headers: { 
+                        Authorization: `Bearer ${apiKey}`,
+                        "Content-Type": "application/x-www-form-urlencoded"
+                    } 
                 });
+                
+                await new Promise(r => setTimeout(r, 1000));
+
                 const newListRes = await axios.get('https://api.torbox.app/v1/api/torrents/me', { headers: { Authorization: `Bearer ${apiKey}` } });
                 torrent = newListRes.data.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
             }
 
-            // Torbox status check
+
             if (!torrent || (torrent.download_state !== "completed" && torrent.download_state !== "cached")) {
+                console.log(`[TORBOX] Torrent status: ${torrent ? torrent.download_state : 'Still processing'}. Serving waiting video.`);
                 return serveLoadingVideo(req, res);
             }
 
-            // ==========================================
-            // FIX: File ID Selection & Header Auth for Torbox
-            // ==========================================
             let fileId = 1; 
             if (torrent.files && torrent.files.length > 0) {
                 const biggestFile = torrent.files.sort((a, b) => b.size - a.size)[0];
                 fileId = biggestFile.id;
             }
 
-            // Torbox needs the API Key sent as a Bearer Token in the headers
+            console.log(`[TORBOX] Torrent ready! Requesting direct stream link for file_id: ${fileId}...`);
             const dlRes = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?torrent_id=${torrent.id}&file_id=${fileId}`, {
                 headers: { Authorization: `Bearer ${apiKey}` }
             });
@@ -169,7 +177,10 @@ app.get('/resolve/:provider/:apiKey/:hash', async (req, res) => {
             return res.redirect(dlRes.data.data);
         }
     } catch (e) {
-        console.error("[RESOLVE ERROR]", e.message);
+        console.error(`[RESOLVE ERROR - ${provider.toUpperCase()}]`, e.message);
+        if (e.response && e.response.data) {
+            console.error("[API RESPONSE]", JSON.stringify(e.response.data));
+        }
         return serveLoadingVideo(req, res);
     }
 });
