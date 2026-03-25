@@ -5,16 +5,16 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 
 const manifest = {
     id: "org.community.yomi",
-    version: "5.1.1",
+    version: "5.1.5",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
-    description: "Your Ultimate NSFW Sukebei/Nyaa Gateway. Auto-parses all messy uploads as best it can. Always verify torrent titles! Info & Help: github:mralanbourne/Yomi",
+    description: "Your Ultimate NSFW Sukebei Gateway. Auto-parses all messy uploads as best it can. Always verify torrent titles! Info & Help: github:mralanbourne/Yomi",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["anilist:", "sukebei:"],
     catalogs: [
-        { id: "sukebei_trending", type: "series", name: "Trending" },
-        { id: "sukebei_top", type: "series", name: "Top Rated" },
+        { id: "sukebei_trending", type: "series", name: "Yomi Trending" },
+        { id: "sukebei_top", type: "series", name: "Yomi Top Rated" },
         { id: "sukebei_search", type: "series", name: "Yomi Search", extra: [{ name: "search", isRequired: true }] }
     ],
     config: [{ key: "apiKey", type: "text", title: "API Key (RD or TB)", required: true }],
