@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong>The definitive high-performance bridge between Sukebei/Nyaa and Stremio. Access the largest library of uncensored adult anime via Real-Debrid or Torbox with advanced episode parsing, subtitle injection, and zero server-side tracking.</strong>
+  <strong>The definitive high-performance bridge between Sukebei and Stremio. Access the largest library of uncensored adult anime via Real-Debrid or Torbox with advanced episode parsing, subtitle injection, and zero server-side tracking.</strong>
 </p>
 
 <div align="center">
