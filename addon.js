@@ -5,10 +5,10 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 
 const manifest = {
     id: "org.community.yomi",
-    version: "5.1.0",
+    version: "5.1.1",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
-    description: "Ultimate Hentai Gateway. Multi-Stage Parsing Engine & Proxy Subs.",
+    description: "Your Ultimate NSFW Sukebei/Nyaa Gateway. Auto-parses all messy uploads as best it can. Always verify torrent titles! Info & Help: github:mralanbourne/Yomi",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["anilist:", "sukebei:"],
@@ -23,6 +23,7 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+// Parsed die Nutzerkonfiguration (API Keys) sicher aus dem Stremio-Install-Link
 function parseConfig(config) {
     if (!config) return {};
     if (typeof config === 'object') return config;
@@ -31,6 +32,7 @@ function parseConfig(config) {
     }
 }
 
+// Wandelt Größenangaben aus Torrent-Titeln in saubere Bytes um
 function parseSizeToBytes(sizeStr) {
     if (!sizeStr) return 0;
     const match = sizeStr.match(/([\d.]+)\s*(GiB|MiB|KiB|GB|MB|KB)/i);
@@ -41,6 +43,7 @@ function parseSizeToBytes(sizeStr) {
     return val;
 }
 
+// Extrahiert Auflösung und Sprache für die Anzeige in Stremio
 function extractTags(title) {
     let res = "SD", lang = "Raw";
     if (/(1080p|1080|FHD)/i.test(title)) res = "1080p";
@@ -53,6 +56,7 @@ function extractTags(title) {
     return { res, lang };
 }
 
+// Bereinigt die Suchanfrage, bevor sie an Sukebei gesendet wird
 function sanitizeSearchQuery(title) {
     return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
@@ -70,7 +74,7 @@ function getBatchRange(filename) {
     return null;
 }
 
-// Extrahiert die exakte Episode aus dem absoluten Chaos
+// Extrahiert die exakte Episode aus dem Chaos der Dateinamen
 function extractEpisodeNumber(filename) {
     // Stage 1: Garbage Collection
     let clean = filename.replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
@@ -93,7 +97,6 @@ function extractEpisodeNumber(filename) {
     if (bracketMatch) return parseInt(bracketMatch[1] || bracketMatch[2], 10);
 
     // Stage 4: Last Number Fallback
-    // Ersetzt alle verbleibenden Klammern und Sonderzeichen durch Leerzeichen
     clean = clean.replace(/[\[\]\(\)\{\}_\-\+~,]/g, ' ').trim();
     const tokens = clean.split(/\s+/);
     
@@ -105,6 +108,7 @@ function extractEpisodeNumber(filename) {
     return null;
 }
 
+// Gleicht die gesuchte Episode mit dem Dateinamen ab
 function isEpisodeMatch(name, requestedEp) {
     const epNum = parseInt(requestedEp, 10);
     
@@ -122,7 +126,7 @@ function isEpisodeMatch(name, requestedEp) {
     return false;
 }
 
-// Wählt die Datei aus der Cache-Liste
+// Wählt die Datei aus der Debrid Cache-Liste
 function findEpisodeInFiles(files, requestedEp) {
     if (!files || files.length === 0) return null;
     const videoFiles = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name));
@@ -142,7 +146,7 @@ function findEpisodeInFiles(files, requestedEp) {
     return null;
 }
 
-// Überprüft un-gecachte Torrents anhand ihres Titels
+// Überprüft un-gecachte Torrents anhand ihres Titels auf Relevanz
 function isTitleMatchingEpisode(title, requestedEp) {
     if (/batch|complete|all\s+episodes/i.test(title)) return true;
     return isEpisodeMatch(title, requestedEp);
@@ -179,10 +183,12 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
         const [anilistMetas, sukebeiTorrents] = await Promise.all([searchAdultAnime(extra.search), searchSukebeiForHentai(extra.search)]);
         const finalMetas = [...anilistMetas];
         const rawGroups = {};
+        
         sukebeiTorrents.forEach(t => {
             const cleanName = cleanTorrentTitle(t.title);
             if (cleanName.length > 2 && !rawGroups[cleanName]) rawGroups[cleanName] = t;
         });
+        
         Object.keys(rawGroups).forEach(cleanName => {
             if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
                 finalMetas.push({ 
@@ -227,7 +233,7 @@ builder.defineMetaHandler(async ({ id }) => {
     meta.type = 'series';
     let epCount = meta.episodes || 1;
 
-    // DYNAMIC SUKEBEI SCAN (Nutzt die neue Engine)
+    // DYNAMIC SUKEBEI SCAN: Sucht den höchsten Episodenwert in den Torrents
     if (epCount === 1 || !meta.episodes) {
         try {
             const torrents = await searchSukebeiForHentai(searchTitle);
@@ -286,7 +292,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
         
         let displayTitle = `🌐 Sukebei Network\n💾 ${t.size} | 👤 ${t.seeders}`;
         
-        // STREAM FILTER
+        // STREAM FILTER LOGIC
         if (files) {
             const matchedFile = findEpisodeInFiles(files, requestedEp);
             if (!matchedFile) return; 
@@ -299,6 +305,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
         const { res, lang } = extractTags(t.title);
         const bytes = parseFloat(t.size) * 1024 * 1024 * 1024;
         
+        // Baut die externen Untertitel-Links für den Proxy auf
         const buildSubs = (fileList, provider, apiKey) => {
             if (!fileList) return [];
             return fileList
