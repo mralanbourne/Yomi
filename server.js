@@ -15,27 +15,36 @@ app.get('/configure', (req, res) => res.redirect('/'));
 
 // SYNCHRONISIERT MIT ADDON.JS CLEANING ENGINE
 function cleanStringForMatching(str) {
-    return str.replace(/\[.*?\]/g, ' ')
-              .replace(/\(.*?\)/g, ' ')
-              .replace(/\b(?:1080|720|480|2160)[pi]\b/gi, ' ')
+    return str.replace(/\b(?:1080|720|480|2160)[pi]\b/gi, ' ')
               .replace(/\b(?:x|h)26[45]\b/gi, ' ')
               .replace(/\b(?:HEVC|AVC|FHD|HD|SD)\b/gi, ' ')
+              .replace(/\[[A-Fa-f0-9]{8}\]/g, ' ')
+              .replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
               .trim();
 }
 
 function isEpisodeMatch(name, requestedEp) {
-    const cleanName = cleanStringForMatching(name);
+    const clean = cleanStringForMatching(name);
     const epNum = parseInt(requestedEp, 10);
-    const batchMatch = cleanName.match(/\b0*(\d+)\s*(?:-|~|to)\s*0*(\d+)\b/i);
+    
+    const batchMatch = clean.match(/(?:^|[\[\(_\-\s])0*(\d+)\s*(?:-|~|to)\s*0*(\d+)(?:[\]\)_\-\s]|$)/i);
     if (batchMatch) {
-        if (epNum >= parseInt(batchMatch[1], 10) && epNum <= parseInt(batchMatch[2], 10)) return true;
+        const start = parseInt(batchMatch[1], 10);
+        const end = parseInt(batchMatch[2], 10);
+        if (epNum >= start && epNum <= end) return true;
     }
-    const epRegex = new RegExp(`(?:[Ee]p(?:isode)?\\.?\\s*|\\-\\s*|\\b|_)(?:0*)${epNum}(?:v\\d)?\\b`, 'i');
-    if (epRegex.test(cleanName)) return true;
+
+    const sxxEyy = new RegExp(`[Ss]\\d+[Ee]0*${epNum}(?:v\\d)?\\b`, 'i');
+    if (sxxEyy.test(clean)) return true;
+
+    const epRegex = new RegExp(`(?:^|[\\s_\\[\\(\\-~])(?:[Ee][Pp](?:isode)?\\s*\\.?\\s*|[Oo][Vv][Aa]\\s*)?0*${epNum}(?:v\\d)?(?:[\\s_\\]\\)\\-\\.~]|$)`, 'i');
+    if (epRegex.test(clean)) return true;
+
     if (epNum === 1) {
-        const hasOtherEp = /(?:[Ee]p(?:isode)?\.?\s*|\-\s*|\b|_)(?:0*)([2-9]|[1-9]\d)(?:v\d)?\b/i.test(cleanName);
+        const hasOtherEp = /(?:^|[\s_\[\(\-~])(?:[Ee][Pp](?:isode)?\s*\.?\s*|[Oo][Vv][Aa]\s*)?0*([2-9]|[1-9]\d+)(?:v\d)?(?:[\s_\]\)\-\.~]|$)/i.test(clean);
         if (!hasOtherEp) return true;
     }
+
     return false;
 }
 
@@ -54,6 +63,8 @@ function selectEpisodeFile(files, requestedEp) {
             return (b.size || b.bytes || 0) - (a.size || a.bytes || 0);
         })[0];
     }
+    
+    if (videoFiles.length === 1 && parseInt(requestedEp, 10) === 1) return videoFiles[0];
     return videoFiles.length > 0 ? videoFiles[0] : files[0];
 }
 
@@ -136,7 +147,6 @@ app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
                 return serveLoadingVideo(req, res);
             }
             if (torrent.download_state !== "completed" && torrent.download_state !== "cached") return serveLoadingVideo(req, res);
-            
             const bestFile = selectEpisodeFile(torrent.files, requestedEp);
             const dl = await axios.get(`https://api.torbox.app/v1/api/torrents/requestdl?token=${apiKey}&torrent_id=${torrent.id}&file_id=${bestFile ? bestFile.id : 0}`);
             return res.redirect(dl.data.data);
