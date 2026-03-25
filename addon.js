@@ -5,10 +5,10 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 
 const manifest = {
     id: "org.community.yomi",
-    version: "4.1.0",
+    version: "5.1.0",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
-    description: "Ultimate Hentai Gateway. Bulletproof Episode Regex, Bracket Support & Proxy Subs.",
+    description: "Ultimate Hentai Gateway. Multi-Stage Parsing Engine & Proxy Subs.",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["anilist:", "sukebei:"],
@@ -57,53 +57,79 @@ function sanitizeSearchQuery(title) {
     return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
-// ----------------------------------------------------------------------------------
-// ULTRA-STRICT CLEANING ENGINE (Lässt Episoden-Klammern in Ruhe!)
-// ----------------------------------------------------------------------------------
-function cleanStringForMatching(str) {
-    return str.replace(/\b(?:1080|720|480|2160)[pi]\b/gi, ' ')
-              .replace(/\b(?:x|h)26[45]\b/gi, ' ')
-              .replace(/\b(?:HEVC|AVC|FHD|HD|SD)\b/gi, ' ')
-              .replace(/\[[A-Fa-f0-9]{8}\]/g, ' ') // Entfernt Anime Checksums wie [A1B2C3D4]
-              .replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
-              .trim();
+// ============================================================================
+// MULTI-STAGE PARSING ENGINE
+// ============================================================================
+
+// Identifiziert Batch-Releases (z.B. "01-12")
+function getBatchRange(filename) {
+    let clean = filename.replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
+                        .replace(/\b(?:1080|720|480|2160)[pi]\b/gi, '');
+    const batchMatch = clean.match(/\b0*(\d+)\s*(?:-|~|to)\s*0*(\d+)\b/i);
+    if (batchMatch) return { start: parseInt(batchMatch[1], 10), end: parseInt(batchMatch[2], 10) };
+    return null;
+}
+
+// Extrahiert die exakte Episode aus dem absoluten Chaos
+function extractEpisodeNumber(filename) {
+    // Stage 1: Garbage Collection
+    let clean = filename.replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
+                        .replace(/\b(?:1080|720|480|2160)[pi]\b/gi, '')
+                        .replace(/\b(?:x|h)26[45]\b/gi, '')
+                        .replace(/\b(?:HEVC|AVC|FHD|HD|SD|10bit|8bit|10-bit|8-bit)\b/gi, '')
+                        .replace(/\[[a-fA-F0-9]{8}\]/g, '') // Entfernt Anime Checksums
+                        .replace(/\b(?:NC)?(?:OP|ED|Opening|Ending)\s*\d*\b/gi, ' ');
+
+    // Stage 2: Explicit Tags (Ep 02, OVA 2, S01E02)
+    const explicitRegex = /(?:ep(?:isode)?\.?\s*|ova\s*|s\d+e)0*(\d+)(?:v\d)?\b/i;
+    const explicitMatch = clean.match(explicitRegex);
+    if (explicitMatch) return parseInt(explicitMatch[1], 10);
+
+    // Stage 3: Bracket/Dash Isolation (" - 02 ", "[02]", "(02)")
+    const dashMatch = clean.match(/(?:^|\s)\-\s+0*(\d+)(?:v\d)?(?:$|\s)/i);
+    if (dashMatch) return parseInt(dashMatch[1], 10);
+    
+    const bracketMatch = clean.match(/\[0*(\d+)(?:v\d)?\]|\(0*(\d+)(?:v\d)?\)/i);
+    if (bracketMatch) return parseInt(bracketMatch[1] || bracketMatch[2], 10);
+
+    // Stage 4: Last Number Fallback
+    // Ersetzt alle verbleibenden Klammern und Sonderzeichen durch Leerzeichen
+    clean = clean.replace(/[\[\]\(\)\{\}_\-\+~,]/g, ' ').trim();
+    const tokens = clean.split(/\s+/);
+    
+    for (let i = tokens.length - 1; i >= 0; i--) {
+        const token = tokens[i];
+        const numMatch = token.match(/^0*(\d+)(?:v\d)?$/i);
+        if (numMatch) return parseInt(numMatch[1], 10);
+    }
+    return null;
 }
 
 function isEpisodeMatch(name, requestedEp) {
-    const clean = cleanStringForMatching(name);
     const epNum = parseInt(requestedEp, 10);
     
-    // 1. Batch Check (01-04, 1~4)
-    const batchMatch = clean.match(/(?:^|[\[\(_\-\s])0*(\d+)\s*(?:-|~|to)\s*0*(\d+)(?:[\]\)_\-\s]|$)/i);
-    if (batchMatch) {
-        const start = parseInt(batchMatch[1], 10);
-        const end = parseInt(batchMatch[2], 10);
-        if (epNum >= start && epNum <= end) return true;
+    const batch = getBatchRange(name);
+    if (batch && epNum >= batch.start && epNum <= batch.end) return true;
+
+    const extractedEp = extractEpisodeNumber(name);
+    if (extractedEp !== null) return extractedEp === epNum;
+
+    // Fail-Safe: Wenn absolut keine Zahl gefunden wurde, behandle es als Film (Ep 1)
+    if (epNum === 1 && extractedEp === null) {
+        if (/trailer|promo|menu|teaser/i.test(name)) return false;
+        return true;
     }
-
-    // 2. Standard S01E02 Format
-    const sxxEyy = new RegExp(`[Ss]\\d+[Ee]0*${epNum}(?:v\\d)?\\b`, 'i');
-    if (sxxEyy.test(clean)) return true;
-
-    // 3. Strikter Check mit Umrandung (Findet [02], (02), - 02, Ep. 2)
-    const epRegex = new RegExp(`(?:^|[\\s_\\[\\(\\-~])(?:[Ee][Pp](?:isode)?\\s*\\.?\\s*|[Oo][Vv][Aa]\\s*)?0*${epNum}(?:v\\d)?(?:[\\s_\\]\\)\\-\\.~]|$)`, 'i');
-    if (epRegex.test(clean)) return true;
-
-    // 4. Fail-Safe für Folge 1 (Movies)
-    if (epNum === 1) {
-        const hasOtherEp = /(?:^|[\s_\[\(\-~])(?:[Ee][Pp](?:isode)?\s*\.?\s*|[Oo][Vv][Aa]\s*)?0*([2-9]|[1-9]\d+)(?:v\d)?(?:[\s_\]\)\-\.~]|$)/i.test(clean);
-        if (!hasOtherEp) return true;
-    }
-
     return false;
 }
 
+// Wählt die Datei aus der Cache-Liste
 function findEpisodeInFiles(files, requestedEp) {
     if (!files || files.length === 0) return null;
     const videoFiles = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name));
     
     const matches = videoFiles.filter(f => isEpisodeMatch(f.name, requestedEp));
     if (matches.length > 0) {
+        // Priorisiere MKV für eingebettete Untertitel
         return matches.sort((a, b) => {
             const aMkv = a.name.toLowerCase().endsWith('.mkv') ? 1 : 0;
             const bMkv = b.name.toLowerCase().endsWith('.mkv') ? 1 : 0;
@@ -116,14 +142,15 @@ function findEpisodeInFiles(files, requestedEp) {
     return null;
 }
 
+// Überprüft un-gecachte Torrents anhand ihres Titels
 function isTitleMatchingEpisode(title, requestedEp) {
-    if (/batch|complete|all/i.test(title)) return true;
+    if (/batch|complete|all\s+episodes/i.test(title)) return true;
     return isEpisodeMatch(title, requestedEp);
 }
 
-// BEREINIGTE POSTER (Nur für das Bild werden alle Klammern gelöscht)
+// BEREINIGTE POSTER (Radikale Säuberung nur für die Bildgenerierung)
 function generateDynamicPoster(title) {
-    let clean = title.replace(/\[.*?\]/g, ' ').replace(/\(.*?\)/g, ' ');
+    let clean = title.replace(/^\[.*?\]\s*/g, '').replace(/\[.*?\]/g, ' ').replace(/\(.*?\)/g, ' ');
     let safeTitle = clean.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s{2,}/g, ' ').substring(0, 30).trim().toUpperCase();
     
     let words = safeTitle.split(" ");
@@ -143,6 +170,7 @@ function generateDynamicPoster(title) {
     const text = encodeURIComponent(lines.join('\n'));
     return `https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=${text}`;
 }
+// ============================================================================
 
 builder.defineCatalogHandler(async ({ id, extra }) => {
     if (id === "sukebei_trending") return { metas: await getTrendingAdultAnime(), cacheMaxAge: 43200 };
@@ -160,7 +188,7 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
                 finalMetas.push({ 
                     id: `sukebei:${Buffer.from(cleanName).toString('base64url')}`, 
                     type: 'series', 
-                    name: cleanName.replace(/\[.*?\]/g, '').trim(), 
+                    name: cleanName.replace(/^\[.*?\]\s*/g, '').trim(), 
                     poster: generateDynamicPoster(cleanName) 
                 });
             }
@@ -182,39 +210,34 @@ builder.defineMetaHandler(async ({ id }) => {
     } else if (id.startsWith('sukebei:')) {
         searchTitle = Buffer.from(id.split(':')[1], 'base64url').toString('utf8');
         
-        let cleanQuery = searchTitle.replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
+        let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
         const malData = await getJikanMeta(cleanQuery);
         
         if (malData) {
             meta = { 
-                id, type: 'series', name: searchTitle.replace(/\[.*?\]/g, '').trim(), 
+                id, type: 'series', name: searchTitle.replace(/^\[.*?\]\s*/g, '').trim(), 
                 poster: malData.poster || generateDynamicPoster(searchTitle),
                 background: malData.background, description: malData.description, episodes: malData.episodes
             };
         } else {
-            meta = { id, type: 'series', name: searchTitle.replace(/\[.*?\]/g, '').trim(), poster: generateDynamicPoster(searchTitle) };
+            meta = { id, type: 'series', name: searchTitle.replace(/^\[.*?\]\s*/g, '').trim(), poster: generateDynamicPoster(searchTitle) };
         }
     }
 
     meta.type = 'series';
     let epCount = meta.episodes || 1;
 
+    // DYNAMIC SUKEBEI SCAN (Nutzt die neue Engine)
     if (epCount === 1 || !meta.episodes) {
         try {
             const torrents = await searchSukebeiForHentai(searchTitle);
             let maxDetected = 1;
             torrents.forEach(t => {
-                let clean = cleanStringForMatching(t.title);
-                const batchMatch = clean.match(/(?:^|[\[\(_\-\s])0*(\d+)\s*(?:-|~|to)\s*0*(\d+)(?:[\]\)_\-\s]|$)/i);
-                if (batchMatch) {
-                    const end = parseInt(batchMatch[2], 10);
-                    if (end > maxDetected && end < 50) maxDetected = end;
-                }
-                const epMatch = clean.match(/(?:^|[\s_\[\(\-~])(?:[Ee][Pp](?:isode)?\s*\.?\s*|[Oo][Vv][Aa]\s*)?(0*[1-9]\d*)(?:v\d)?(?:[\s_\]\)\-\.~]|$)/i);
-                if (epMatch) {
-                    const num = parseInt(epMatch[1], 10);
-                    if (num > maxDetected && num < 50) maxDetected = num;
-                }
+                const batch = getBatchRange(t.title);
+                if (batch && batch.end > maxDetected && batch.end < 50) maxDetected = batch.end;
+                
+                const ext = extractEpisodeNumber(t.title);
+                if (ext && ext > maxDetected && ext < 50) maxDetected = ext;
             });
             if (maxDetected > epCount) epCount = maxDetected;
         } catch(e) {}
@@ -263,6 +286,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
         
         let displayTitle = `🌐 Sukebei Network\n💾 ${t.size} | 👤 ${t.seeders}`;
         
+        // STREAM FILTER
         if (files) {
             const matchedFile = findEpisodeInFiles(files, requestedEp);
             if (!matchedFile) return; 
