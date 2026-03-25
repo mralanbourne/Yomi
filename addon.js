@@ -18,12 +18,26 @@ const manifest = {
         { id: "sukebei_search", type: "series", name: "Yomi Search", extra: [{ name: "search", isRequired: true }] }
     ],
     config: [{ key: "apiKey", type: "text", title: "API Key (RD or TB)", required: true }],
-    behaviorHints: { configurable: true, configurationRequired: true }
+    behaviorHints: { configurable: true, configurationRequired: true },
+
+    /****************************************************************************
+     * *
+     * STREMIO-ADDONS.NET VERIFICATION BLOCK (DEV SLOT CLAIM)                  *
+     * *
+     ****************************************************************************/
+    stremioAddonsConfig: {
+        issuer: "https://stremio-addons.net",
+        signature: "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..CxpA9e3VsFf2BxRPdWFKuw.WTcTXyfiVKcLYL82L6z1gKpmC5BWfJxdoiTZc1YtZhy3lGruacLLFNTGobSQjo5E6r7QJjrcx0a5BigJVEl9IrKxffB4Iory70wyLPy_We0kr6oL-jft3aIcLvE1P24G.adQTwcUzK8X7YXcEPX0TDw"
+    }
+    /****************************************************************************/
 };
 
 const builder = new addonBuilder(manifest);
 
-// Parsed die Nutzerkonfiguration (API Keys) sicher aus dem Stremio-Install-Link
+/**
+ * Parsed die Nutzerkonfiguration (API Keys) sicher aus dem Stremio-Install-Link.
+ * Unterstützt Base64 und URL-Encoded Formate.
+ */
 function parseConfig(config) {
     if (!config) return {};
     if (typeof config === 'object') return config;
@@ -32,7 +46,10 @@ function parseConfig(config) {
     }
 }
 
-// Wandelt Größenangaben aus Torrent-Titeln in saubere Bytes um
+/**
+ * Wandelt Größenangaben aus Torrent-Titeln (z.B. "1.5 GiB") in reine Bytes um.
+ * Wichtig für die Sortierung der Streams nach Qualität/Größe.
+ */
 function parseSizeToBytes(sizeStr) {
     if (!sizeStr) return 0;
     const match = sizeStr.match(/([\d.]+)\s*(GiB|MiB|KiB|GB|MB|KB)/i);
@@ -43,7 +60,10 @@ function parseSizeToBytes(sizeStr) {
     return val;
 }
 
-// Extrahiert Auflösung und Sprache für die Anzeige in Stremio
+/**
+ * Extrahiert Auflösung (1080p, 4K etc.) und Tags (Uncut, Subbed) aus dem Titel.
+ * Wird für die Label-Anzeige in der Stremio-Stream-Liste genutzt.
+ */
 function extractTags(title) {
     let res = "SD", lang = "Raw";
     if (/(1080p|1080|FHD)/i.test(title)) res = "1080p";
@@ -56,7 +76,9 @@ function extractTags(title) {
     return { res, lang };
 }
 
-// Bereinigt die Suchanfrage, bevor sie an Sukebei gesendet wird
+/**
+ * Bereinigt die Suchanfrage von Sonderzeichen, bevor sie an die Tracker gesendet wird.
+ */
 function sanitizeSearchQuery(title) {
     return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
@@ -65,7 +87,9 @@ function sanitizeSearchQuery(title) {
 // MULTI-STAGE PARSING ENGINE
 // ============================================================================
 
-// Identifiziert Batch-Releases (z.B. "01-12")
+/**
+ * Erkennt Batch-Releases anhand von Nummern-Bereichen (z.B. 01-12 oder 1~4).
+ */
 function getBatchRange(filename) {
     let clean = filename.replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
                         .replace(/\b(?:1080|720|480|2160)[pi]\b/gi, '');
@@ -74,29 +98,32 @@ function getBatchRange(filename) {
     return null;
 }
 
-// Extrahiert die exakte Episode aus dem Chaos der Dateinamen
+/**
+ * Die Kern-Logik: Extrahiert die Episodennummer aus chaotischen Release-Namen.
+ * Nutzt Garbage Collection, Explizite Tags und einen Positional-Fallback.
+ */
 function extractEpisodeNumber(filename) {
-    // Stage 1: Garbage Collection
+    // Stage 1: Garbage Collection (Löscht Codecs, Auflösungen und Checksummen)
     let clean = filename.replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
                         .replace(/\b(?:1080|720|480|2160)[pi]\b/gi, '')
                         .replace(/\b(?:x|h)26[45]\b/gi, '')
                         .replace(/\b(?:HEVC|AVC|FHD|HD|SD|10bit|8bit|10-bit|8-bit)\b/gi, '')
-                        .replace(/\[[a-fA-F0-9]{8}\]/g, '') // Entfernt Anime Checksums
+                        .replace(/\[[a-fA-F0-9]{8}\]/g, '') 
                         .replace(/\b(?:NC)?(?:OP|ED|Opening|Ending)\s*\d*\b/gi, ' ');
 
-    // Stage 2: Explicit Tags (Ep 02, OVA 2, S01E02)
+    // Stage 2: Explicit Tags (Sucht nach ep, ova, s01e01)
     const explicitRegex = /(?:ep(?:isode)?\.?\s*|ova\s*|s\d+e)0*(\d+)(?:v\d)?\b/i;
     const explicitMatch = clean.match(explicitRegex);
     if (explicitMatch) return parseInt(explicitMatch[1], 10);
 
-    // Stage 3: Bracket/Dash Isolation (" - 02 ", "[02]", "(02)")
+    // Stage 3: Isolation Checks (Sucht nach isolierten Nummern in Klammern oder nach Bindestrichen)
     const dashMatch = clean.match(/(?:^|\s)\-\s+0*(\d+)(?:v\d)?(?:$|\s)/i);
     if (dashMatch) return parseInt(dashMatch[1], 10);
     
     const bracketMatch = clean.match(/\[0*(\d+)(?:v\d)?\]|\(0*(\d+)(?:v\d)?\)/i);
     if (bracketMatch) return parseInt(bracketMatch[1] || bracketMatch[2], 10);
 
-    // Stage 4: Last Number Fallback
+    // Stage 4: Last Number Fallback (Nimmt die letzte alleinstehende Zahl im Titel)
     clean = clean.replace(/[\[\]\(\)\{\}_\-\+~,]/g, ' ').trim();
     const tokens = clean.split(/\s+/);
     
@@ -108,7 +135,9 @@ function extractEpisodeNumber(filename) {
     return null;
 }
 
-// Gleicht die gesuchte Episode mit dem Dateinamen ab
+/**
+ * Prüft, ob ein Dateiname zur angeforderten Episode passt.
+ */
 function isEpisodeMatch(name, requestedEp) {
     const epNum = parseInt(requestedEp, 10);
     
@@ -118,7 +147,7 @@ function isEpisodeMatch(name, requestedEp) {
     const extractedEp = extractEpisodeNumber(name);
     if (extractedEp !== null) return extractedEp === epNum;
 
-    // Fail-Safe: Wenn absolut keine Zahl gefunden wurde, behandle es als Film (Ep 1)
+    // Fail-Safe für Filme (Episode 1), wenn gar keine Nummer gefunden wurde
     if (epNum === 1 && extractedEp === null) {
         if (/trailer|promo|menu|teaser/i.test(name)) return false;
         return true;
@@ -126,14 +155,16 @@ function isEpisodeMatch(name, requestedEp) {
     return false;
 }
 
-// Wählt die Datei aus der Debrid Cache-Liste
+/**
+ * Filtert die Dateiliste eines Torrents und wählt das passende Video aus.
+ * Priorisiert MKV-Container wegen meist besserer Subtitle-Unterstützung.
+ */
 function findEpisodeInFiles(files, requestedEp) {
     if (!files || files.length === 0) return null;
     const videoFiles = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name));
     
     const matches = videoFiles.filter(f => isEpisodeMatch(f.name, requestedEp));
     if (matches.length > 0) {
-        // Priorisiere MKV für eingebettete Untertitel
         return matches.sort((a, b) => {
             const aMkv = a.name.toLowerCase().endsWith('.mkv') ? 1 : 0;
             const bMkv = b.name.toLowerCase().endsWith('.mkv') ? 1 : 0;
@@ -146,13 +177,17 @@ function findEpisodeInFiles(files, requestedEp) {
     return null;
 }
 
-// Überprüft un-gecachte Torrents anhand ihres Titels auf Relevanz
+/**
+ * Prüft un-gecachte Torrents vorab auf Relevanz.
+ */
 function isTitleMatchingEpisode(title, requestedEp) {
     if (/batch|complete|all\s+episodes/i.test(title)) return true;
     return isEpisodeMatch(title, requestedEp);
 }
 
-// BEREINIGTE POSTER (Radikale Säuberung nur für die Bildgenerierung)
+/**
+ * Generiert ein Platzhalter-Poster mit dem Titel für Ergebnisse ohne Bilddaten.
+ */
 function generateDynamicPoster(title) {
     let clean = title.replace(/^\[.*?\]\s*/g, '').replace(/\[.*?\]/g, ' ').replace(/\(.*?\)/g, ' ');
     let safeTitle = clean.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s{2,}/g, ' ').substring(0, 30).trim().toUpperCase();
@@ -174,6 +209,9 @@ function generateDynamicPoster(title) {
     const text = encodeURIComponent(lines.join('\n'));
     return `https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=${text}`;
 }
+
+// ============================================================================
+// HANDLER DEFINITIONEN
 // ============================================================================
 
 builder.defineCatalogHandler(async ({ id, extra }) => {
@@ -233,7 +271,7 @@ builder.defineMetaHandler(async ({ id }) => {
     meta.type = 'series';
     let epCount = meta.episodes || 1;
 
-    // DYNAMIC SUKEBEI SCAN: Sucht den höchsten Episodenwert in den Torrents
+    // Dynamische Episodenzählung basierend auf Sukebei Suchergebnissen
     if (epCount === 1 || !meta.episodes) {
         try {
             const torrents = await searchSukebeiForHentai(searchTitle);
@@ -292,7 +330,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
         
         let displayTitle = `🌐 Sukebei Network\n💾 ${t.size} | 👤 ${t.seeders}`;
         
-        // STREAM FILTER LOGIC
         if (files) {
             const matchedFile = findEpisodeInFiles(files, requestedEp);
             if (!matchedFile) return; 
@@ -305,7 +342,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
         const { res, lang } = extractTags(t.title);
         const bytes = parseFloat(t.size) * 1024 * 1024 * 1024;
         
-        // Baut die externen Untertitel-Links für den Proxy auf
         const buildSubs = (fileList, provider, apiKey) => {
             if (!fileList) return [];
             return fileList
