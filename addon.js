@@ -5,10 +5,10 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 
 const manifest = {
     id: "org.community.yomi",
-    version: "3.7.2",
+    version: "4.1.0",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
-    description: "Ultimate Hentai Gateway. Dual-Database (AniList+MAL) & Smart Episode Proxy.",
+    description: "Ultimate Hentai Gateway. Bulletproof Episode Regex, Bracket Support & Proxy Subs.",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["anilist:", "sukebei:"],
@@ -57,31 +57,41 @@ function sanitizeSearchQuery(title) {
     return title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
+// ----------------------------------------------------------------------------------
+// ULTRA-STRICT CLEANING ENGINE (Lässt Episoden-Klammern in Ruhe!)
+// ----------------------------------------------------------------------------------
 function cleanStringForMatching(str) {
-    return str.replace(/\[.*?\]/g, ' ') 
-              .replace(/\(.*?\)/g, ' ') 
-              .replace(/\b(?:1080|720|480|2160)[pi]\b/gi, ' ')
+    return str.replace(/\b(?:1080|720|480|2160)[pi]\b/gi, ' ')
               .replace(/\b(?:x|h)26[45]\b/gi, ' ')
               .replace(/\b(?:HEVC|AVC|FHD|HD|SD)\b/gi, ' ')
+              .replace(/\[[A-Fa-f0-9]{8}\]/g, ' ') // Entfernt Anime Checksums wie [A1B2C3D4]
+              .replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
               .trim();
 }
 
 function isEpisodeMatch(name, requestedEp) {
-    const cleanName = cleanStringForMatching(name);
+    const clean = cleanStringForMatching(name);
     const epNum = parseInt(requestedEp, 10);
     
-    const batchMatch = cleanName.match(/\b0*(\d+)\s*(?:-|~|to)\s*0*(\d+)\b/i);
+    // 1. Batch Check (01-04, 1~4)
+    const batchMatch = clean.match(/(?:^|[\[\(_\-\s])0*(\d+)\s*(?:-|~|to)\s*0*(\d+)(?:[\]\)_\-\s]|$)/i);
     if (batchMatch) {
         const start = parseInt(batchMatch[1], 10);
         const end = parseInt(batchMatch[2], 10);
         if (epNum >= start && epNum <= end) return true;
     }
 
-    const epRegex = new RegExp(`(?:[Ee]p(?:isode)?\\.?\\s*|\\-\\s*|\\b|_)(?:0*)${epNum}(?:v\\d)?\\b`, 'i');
-    if (epRegex.test(cleanName)) return true;
+    // 2. Standard S01E02 Format
+    const sxxEyy = new RegExp(`[Ss]\\d+[Ee]0*${epNum}(?:v\\d)?\\b`, 'i');
+    if (sxxEyy.test(clean)) return true;
 
+    // 3. Strikter Check mit Umrandung (Findet [02], (02), - 02, Ep. 2)
+    const epRegex = new RegExp(`(?:^|[\\s_\\[\\(\\-~])(?:[Ee][Pp](?:isode)?\\s*\\.?\\s*|[Oo][Vv][Aa]\\s*)?0*${epNum}(?:v\\d)?(?:[\\s_\\]\\)\\-\\.~]|$)`, 'i');
+    if (epRegex.test(clean)) return true;
+
+    // 4. Fail-Safe für Folge 1 (Movies)
     if (epNum === 1) {
-        const hasOtherEp = /(?:[Ee]p(?:isode)?\.?\s*|\-\s*|\b|_)(?:0*)([2-9]|[1-9]\d)(?:v\d)?\b/i.test(cleanName);
+        const hasOtherEp = /(?:^|[\s_\[\(\-~])(?:[Ee][Pp](?:isode)?\s*\.?\s*|[Oo][Vv][Aa]\s*)?0*([2-9]|[1-9]\d+)(?:v\d)?(?:[\s_\]\)\-\.~]|$)/i.test(clean);
         if (!hasOtherEp) return true;
     }
 
@@ -106,15 +116,20 @@ function findEpisodeInFiles(files, requestedEp) {
     return null;
 }
 
-// NEU: Dynamischer Poster-Generator
+function isTitleMatchingEpisode(title, requestedEp) {
+    if (/batch|complete|all/i.test(title)) return true;
+    return isEpisodeMatch(title, requestedEp);
+}
+
+// BEREINIGTE POSTER (Nur für das Bild werden alle Klammern gelöscht)
 function generateDynamicPoster(title) {
-    // Nur Buchstaben & Zahlen, maximal 30 Zeichen, sonst bricht der Text im Bild um
-    let safeTitle = title.replace(/[^a-zA-Z0-9 ]/g, "").substring(0, 30).trim().toUpperCase();
+    let clean = title.replace(/\[.*?\]/g, ' ').replace(/\(.*?\)/g, ' ');
+    let safeTitle = clean.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s{2,}/g, ' ').substring(0, 30).trim().toUpperCase();
+    
     let words = safeTitle.split(" ");
     let lines = [];
     let line = "";
     
-    // Bricht den Titel sauber auf mehrere Zeilen um
     for (let word of words) {
         if ((line + word).length > 10) {
             if (line) lines.push(line.trim());
@@ -145,8 +160,8 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
                 finalMetas.push({ 
                     id: `sukebei:${Buffer.from(cleanName).toString('base64url')}`, 
                     type: 'series', 
-                    name: cleanName, 
-                    poster: generateDynamicPoster(cleanName) // FIX: Nutzt jetzt den dynamischen Generator
+                    name: cleanName.replace(/\[.*?\]/g, '').trim(), 
+                    poster: generateDynamicPoster(cleanName) 
                 });
             }
         });
@@ -166,27 +181,18 @@ builder.defineMetaHandler(async ({ id }) => {
         if (!meta) meta = { id, type: 'series', name: searchTitle };
     } else if (id.startsWith('sukebei:')) {
         searchTitle = Buffer.from(id.split(':')[1], 'base64url').toString('utf8');
-        const cleanQuery = cleanStringForMatching(searchTitle);
         
+        let cleanQuery = searchTitle.replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
         const malData = await getJikanMeta(cleanQuery);
         
         if (malData) {
             meta = { 
-                id, 
-                type: 'series', 
-                name: searchTitle, 
+                id, type: 'series', name: searchTitle.replace(/\[.*?\]/g, '').trim(), 
                 poster: malData.poster || generateDynamicPoster(searchTitle),
-                background: malData.background,
-                description: malData.description,
-                episodes: malData.episodes
+                background: malData.background, description: malData.description, episodes: malData.episodes
             };
         } else {
-            meta = { 
-                id, 
-                type: 'series', 
-                name: searchTitle, 
-                poster: generateDynamicPoster(searchTitle) // FIX: Fallback falls MAL auch nichts hat
-            };
+            meta = { id, type: 'series', name: searchTitle.replace(/\[.*?\]/g, '').trim(), poster: generateDynamicPoster(searchTitle) };
         }
     }
 
@@ -198,13 +204,13 @@ builder.defineMetaHandler(async ({ id }) => {
             const torrents = await searchSukebeiForHentai(searchTitle);
             let maxDetected = 1;
             torrents.forEach(t => {
-                const clean = cleanStringForMatching(t.title);
-                const batchMatch = clean.match(/\b0*(\d+)\s*(?:-|~|to)\s*0*(\d+)\b/i);
+                let clean = cleanStringForMatching(t.title);
+                const batchMatch = clean.match(/(?:^|[\[\(_\-\s])0*(\d+)\s*(?:-|~|to)\s*0*(\d+)(?:[\]\)_\-\s]|$)/i);
                 if (batchMatch) {
                     const end = parseInt(batchMatch[2], 10);
                     if (end > maxDetected && end < 50) maxDetected = end;
                 }
-                const epMatch = clean.match(/(?:[Ee]p(?:isode)?\.?\s*|\-\s*|\b)(0*[1-9]\d*)(?:v\d)?\b/i);
+                const epMatch = clean.match(/(?:^|[\s_\[\(\-~])(?:[Ee][Pp](?:isode)?\s*\.?\s*|[Oo][Vv][Aa]\s*)?(0*[1-9]\d*)(?:v\d)?(?:[\s_\]\)\-\.~]|$)/i);
                 if (epMatch) {
                     const num = parseInt(epMatch[1], 10);
                     if (num > maxDetected && num < 50) maxDetected = num;
@@ -218,14 +224,7 @@ builder.defineMetaHandler(async ({ id }) => {
     const episodeThumbnail = meta.background || meta.poster || "https://dummyimage.com/600x337/1a1a1a/e91e63.png&text=YOMI+EPISODE";
 
     for (let i = 1; i <= epCount; i++) {
-        videos.push({ 
-            id: `${id}:1:${i}`, 
-            title: `Episode ${i}`, 
-            season: 1, 
-            episode: i, 
-            released: new Date().toISOString(),
-            thumbnail: episodeThumbnail
-        });
+        videos.push({ id: `${id}:1:${i}`, title: `Episode ${i}`, season: 1, episode: i, released: new Date().toISOString(), thumbnail: episodeThumbnail });
     }
     meta.videos = videos;
 
@@ -269,15 +268,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             if (!matchedFile) return; 
             displayTitle += `\n🎯 File: ${matchedFile.name}`;
         } else {
-            const cleanTitle = cleanStringForMatching(t.title);
-            const epNum = parseInt(requestedEp, 10);
-            const epRegex = new RegExp(`(?:[Ee]p(?:isode)?\\.?\\s*|\\-\\s*|\\b|_)(?:0*)${epNum}(?:v\\d)?\\b`, 'i');
-            const isBatch = /\b0*(\d+)\s*(?:-|~|to)\s*0*(\d+)\b/i.test(cleanTitle) || /batch|complete|all/i.test(cleanTitle);
-            
-            if (!isBatch && !epRegex.test(cleanTitle)) {
-                const otherEpRegex = /(?:[Ee]p(?:isode)?\.?\s*|\-\s*|\b|_)(?:0*)([2-9]|[1-9]\d)(?:v\d)?\b/i;
-                if (otherEpRegex.test(cleanTitle) && epNum !== 1) return; 
-            }
+            if (!isTitleMatchingEpisode(t.title, requestedEp)) return; 
             displayTitle += `\n📄 ${t.title}`;
         }
 
