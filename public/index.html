@@ -6,10 +6,14 @@
     <title>Yomi Setup | Forbidden Gateway</title>
     
     <link rel="icon" type="image/png" href="/yomi.png">
-    
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Kaisei+Tokumin:wght@400;700;800&family=Space+Mono&display=swap" rel="stylesheet">
+    
     <style>
+        /* VISUAL ENGINE: 
+           Uses a mix of radial gradients and CSS animations to create a 
+           shifting, atmospheric dark background.
+        */
         body {
             font-family: 'Kaisei Tokumin', serif;
             background-color: #050505;
@@ -26,6 +30,9 @@
             100% { background-position: 100% 50%; }
         }
 
+        /* GLASSMORPHISM UI: 
+           High blur values and low opacity borders create the "frosted glass" effect.
+        */
         .glass-card {
             background: rgba(10, 10, 15, 0.1); 
             backdrop-filter: blur(25px);
@@ -40,6 +47,7 @@
             50% { transform: translateY(-12px); }
         }
 
+        /* Neon Glow Effects for Typography */
         .neon-text {
             color: #fff;
             text-shadow: 0 0 5px #fff, 0 0 10px #e91e63, 0 0 20px #e91e63, 0 0 40px #9c27b0;
@@ -53,6 +61,7 @@
             text-transform: uppercase;
         }
 
+        /* Large Background Logo (Watermark) */
         .bg-logo-container {
             position: fixed;
             inset: 0;
@@ -71,6 +80,7 @@
             transform: rotate(-5deg);
         }
 
+        /* Input Styling: Transparent with focused glow */
         .input-glass {
             background: rgba(0, 0, 0, 0.5);
             border: 1px solid rgba(255, 255, 255, 0.03);
@@ -126,6 +136,7 @@
             transform: scale(1.02);
         }
 
+        /* Modal / Overlay logic for errors */
         #modal-overlay {
             display: none;
             position: fixed;
@@ -218,6 +229,9 @@
     </div>
 
     <script>
+        /**
+         * UI CONTROLS: Simple Modal logic
+         */
         function showModal() {
             document.getElementById('modal-overlay').classList.add('show-modal');
         }
@@ -226,10 +240,17 @@
             document.getElementById('modal-overlay').classList.remove('show-modal');
         }
 
+        /**
+         * CORE LOGIC: THE INSTALLATION HANDLER
+         * This function builds the specialized Stremio Addon URL.
+         * Stremio stores its configuration by encoding data into the Manifest URL itself.
+         * * @param {string} type - 'app' for local stremio, 'web' for the browser version
+         */
         function install(type) {
             const rd = document.getElementById('rdKey').value.trim();
             const tb = document.getElementById('tbKey').value.trim();
             
+            // Validation: Ensure the user provided at least one cloud provider key
             if (!rd && !tb) {
                 const card = document.querySelector('.glass-card');
                 card.style.borderColor = '#e91e63';
@@ -238,20 +259,29 @@
                 return;
             }
 
-            // Capture catalog settings from the UI
+            // Capture the visibility settings for catalogs
             const showTrending = document.getElementById('showTrending').checked;
             const showTop = document.getElementById('showTop').checked;
 
+            // 1. Create a config object
+            // 2. Stringify it to JSON
+            // 3. URI Encode it so it safely travels in the URL path
             const config = JSON.stringify({ rdKey: rd, tbKey: tb, showTrending, showTop });
+            
+            // Generate the final manifest URL: https://HOST.com/CONFIG_JSON/manifest.json
             const manifestUrl = window.location.origin + "/" + encodeURIComponent(config) + "/manifest.json";
             
             if (type === 'app') {
+                // To install in the local app, we replace 'https://' with 'stremio://'
+                // This triggers the deep link registered by the Stremio desktop client.
                 window.location.href = manifestUrl.replace(/^https?:\/\//i, "stremio://");
             } else {
+                // To install in the Web version, we append our manifest to the official web.stremio.com link
                 window.open("https://web.stremio.com/#/addons?addon=" + encodeURIComponent(manifestUrl));
             }
         }
 
+        // UX: Reset input border color when user starts typing again
         document.querySelectorAll('input[type="password"]').forEach(input => {
             input.addEventListener('input', () => {
                 input.style.borderColor = '';
