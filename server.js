@@ -13,38 +13,58 @@ app.use(express.static(path.join(__dirname, 'static')));
 app.get('/health', (req, res) => res.status(200).json({ status: 'alive' }));
 app.get('/configure', (req, res) => res.redirect('/'));
 
-// SYNCHRONISIERT MIT ADDON.JS CLEANING ENGINE
-function cleanStringForMatching(str) {
-    return str.replace(/\b(?:1080|720|480|2160)[pi]\b/gi, ' ')
-              .replace(/\b(?:x|h)26[45]\b/gi, ' ')
-              .replace(/\b(?:HEVC|AVC|FHD|HD|SD)\b/gi, ' ')
-              .replace(/\[[A-Fa-f0-9]{8}\]/g, ' ')
-              .replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
-              .trim();
+// ============================================================================
+// MULTI-STAGE PARSING ENGINE (Synchronisiert)
+// ============================================================================
+function extractEpisodeNumber(filename) {
+    let clean = filename.replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
+                        .replace(/\b(?:1080|720|480|2160)[pi]\b/gi, '')
+                        .replace(/\b(?:x|h)26[45]\b/gi, '')
+                        .replace(/\b(?:HEVC|AVC|FHD|HD|SD|10bit|8bit|10-bit|8-bit)\b/gi, '')
+                        .replace(/\[[a-fA-F0-9]{8}\]/g, '')
+                        .replace(/\b(?:NC)?(?:OP|ED|Opening|Ending)\s*\d*\b/gi, ' ');
+
+    const explicitRegex = /(?:ep(?:isode)?\.?\s*|ova\s*|s\d+e)0*(\d+)(?:v\d)?\b/i;
+    const explicitMatch = clean.match(explicitRegex);
+    if (explicitMatch) return parseInt(explicitMatch[1], 10);
+
+    const dashMatch = clean.match(/(?:^|\s)\-\s+0*(\d+)(?:v\d)?(?:$|\s)/i);
+    if (dashMatch) return parseInt(dashMatch[1], 10);
+    
+    const bracketMatch = clean.match(/\[0*(\d+)(?:v\d)?\]|\(0*(\d+)(?:v\d)?\)/i);
+    if (bracketMatch) return parseInt(bracketMatch[1] || bracketMatch[2], 10);
+
+    clean = clean.replace(/[\[\]\(\)\{\}_\-\+~,]/g, ' ').trim();
+    const tokens = clean.split(/\s+/);
+    for (let i = tokens.length - 1; i >= 0; i--) {
+        const token = tokens[i];
+        const numMatch = token.match(/^0*(\d+)(?:v\d)?$/i);
+        if (numMatch) return parseInt(numMatch[1], 10);
+    }
+    return null;
+}
+
+function getBatchRange(filename) {
+    let clean = filename.replace(/\.(mkv|mp4|avi|wmv|srt|ass|ssa|vtt|sub|idx)$/i, '')
+                        .replace(/\b(?:1080|720|480|2160)[pi]\b/gi, '');
+    const batchMatch = clean.match(/\b0*(\d+)\s*(?:-|~|to)\s*0*(\d+)\b/i);
+    if (batchMatch) return { start: parseInt(batchMatch[1], 10), end: parseInt(batchMatch[2], 10) };
+    return null;
 }
 
 function isEpisodeMatch(name, requestedEp) {
-    const clean = cleanStringForMatching(name);
     const epNum = parseInt(requestedEp, 10);
     
-    const batchMatch = clean.match(/(?:^|[\[\(_\-\s])0*(\d+)\s*(?:-|~|to)\s*0*(\d+)(?:[\]\)_\-\s]|$)/i);
-    if (batchMatch) {
-        const start = parseInt(batchMatch[1], 10);
-        const end = parseInt(batchMatch[2], 10);
-        if (epNum >= start && epNum <= end) return true;
+    const batch = getBatchRange(name);
+    if (batch && epNum >= batch.start && epNum <= batch.end) return true;
+
+    const extractedEp = extractEpisodeNumber(name);
+    if (extractedEp !== null) return extractedEp === epNum;
+
+    if (epNum === 1 && extractedEp === null) {
+        if (/trailer|promo|menu|teaser/i.test(name)) return false;
+        return true;
     }
-
-    const sxxEyy = new RegExp(`[Ss]\\d+[Ee]0*${epNum}(?:v\\d)?\\b`, 'i');
-    if (sxxEyy.test(clean)) return true;
-
-    const epRegex = new RegExp(`(?:^|[\\s_\\[\\(\\-~])(?:[Ee][Pp](?:isode)?\\s*\\.?\\s*|[Oo][Vv][Aa]\\s*)?0*${epNum}(?:v\\d)?(?:[\\s_\\]\\)\\-\\.~]|$)`, 'i');
-    if (epRegex.test(clean)) return true;
-
-    if (epNum === 1) {
-        const hasOtherEp = /(?:^|[\s_\[\(\-~])(?:[Ee][Pp](?:isode)?\s*\.?\s*|[Oo][Vv][Aa]\s*)?0*([2-9]|[1-9]\d+)(?:v\d)?(?:[\s_\]\)\-\.~]|$)/i.test(clean);
-        if (!hasOtherEp) return true;
-    }
-
     return false;
 }
 
@@ -67,8 +87,8 @@ function selectEpisodeFile(files, requestedEp) {
     if (videoFiles.length === 1 && parseInt(requestedEp, 10) === 1) return videoFiles[0];
     return videoFiles.length > 0 ? videoFiles[0] : files[0];
 }
+// ============================================================================
 
-// BULLETPROOF SUBTITLE PROXY
 app.get('/sub/:provider/:apiKey/:hash/:fileId', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
