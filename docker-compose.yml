@@ -8,15 +8,10 @@ services:
     ports:
       - "7000:7000"
     environment:
-      # Hier kannst du deine Upstash-Daten direkt eintragen oder sie in der .env lassen
       - PORT=7000
-      - UPSTASH_REDIS_REST_URL=${UPSTASH_REDIS_REST_URL}
-      - UPSTASH_REDIS_REST_TOKEN=${UPSTASH_REDIS_REST_TOKEN}
     volumes:
-      # Verlinkt deine lokalen Ordner in den Container für einfache Updates
       - ./public:/app/public
       - ./static:/app/static
-      # Die .env Datei wird ebenfalls eingebunden
       - ./.env:/app/.env
     networks:
       - yomi-network
