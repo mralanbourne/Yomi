@@ -20,16 +20,6 @@ const manifest = {
     config: [{ key: "apiKey", type: "text", title: "API Key (RD or TB)", required: true }],
     behaviorHints: { configurable: true, configurationRequired: true },
 
-    /****************************************************************************
-     * *
-     * STREMIO-ADDONS.NET VERIFICATION BLOCK (DEV SLOT CLAIM)                  *
-     * *
-     ****************************************************************************/
-    stremioAddonsConfig: {
-        issuer: "https://stremio-addons.net",
-        signature: "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..CxpA9e3VsFf2BxRPdWFKuw.WTcTXyfiVKcLYL82L6z1gKpmC5BWfJxdoiTZc1YtZhy3lGruacLLFNTGobSQjo5E6r7QJjrcx0a5BigJVEl9IrKxffB4Iory70wyLPy_We0kr6oL-jft3aIcLvE1P24G.adQTwcUzK8X7YXcEPX0TDw"
-    }
-    /****************************************************************************/
 };
 
 const builder = new addonBuilder(manifest);
