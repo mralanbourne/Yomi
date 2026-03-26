@@ -19,7 +19,7 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 // ============================================================================
 const manifest = {
     id: "org.community.yomi",
-    version: "5.2.2",
+    version: "5.2.3",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox. Smart-parsing tames chaotic torrent names for a clean catalog. Pure quality, zero buffering. Info: github.com/mralanbourne/Yomi",
@@ -144,16 +144,16 @@ function extractEpisodeNumber(filename) {
  */
 function isEpisodeMatch(name, requestedEp) {
     const epNum = parseInt(requestedEp, 10);
-    // FIX 1: Isolate the filename from the full path to ignore misleading folder names
+    // Isolate the filename from the full path to ignore misleading folder names
     const parts = name.split('/');
     const filename = parts[parts.length - 1];
-    // FIX 2: Priority Inversion - Always check for a specific episode number FIRST
+    // Priority Inversion - Always check for a specific episode number FIRST
     const extractedEp = extractEpisodeNumber(filename);
     if (extractedEp !== null) {
     // If the parser found a specific number (e.g. "01"), it MUST match what the user clicked
         return extractedEp === epNum;
     }
-    // FIX 3: Only fall back to batch ranges if the file ITSELF has no specific episode number
+    // Only fall back to batch ranges if the file ITSELF has no specific episode number
     // (e.g., the video file itself is named "Anime_01-12.mkv")
     const batch = getBatchRange(filename);
     if (batch && epNum >= batch.start && epNum <= batch.end) {
@@ -206,6 +206,8 @@ function generateDynamicPoster(title) {
         } else { line += word + " "; }
     }
     if (line) lines.push(line.trim());
+    
+    // Replaced &text with ?text for valid URL syntax to prevent Stremio rejecting the metadata
     return `https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=${encodeURIComponent(lines.join('\n'))}`;
 }
 
@@ -253,7 +255,7 @@ builder.defineCatalogHandler(async ({ id, extra }) => {
  * Fetches detailed info (poster, description, video list) for a specific series.
  */
 builder.defineMetaHandler(async ({ id }) => {
-    // SECURITY GUARD: Ignore external IDs (IMDB, etc.) that Stremio sends in the background.
+// SECURITY GUARD: Ignore external IDs (IMDB, etc.) that Stremio sends in the background.
     if (!id.startsWith('anilist:') && !id.startsWith('sukebei:')) {
         return Promise.resolve({ meta: null });
     }
@@ -264,7 +266,16 @@ builder.defineMetaHandler(async ({ id }) => {
     try {
         if (id.startsWith('anilist:')) {
             const parts = id.split(':');
-            meta = await getAnimeMeta(parts[1]);
+            
+            // Robust parsing for foreign addons (like AIOMetadata)
+            // We check if parts[1] is actually a number. If not (e.g., 'anilist:anime:12345'), 
+            // we look for the first number in the array.
+            let aniListId = parts[1];
+            if (isNaN(aniListId)) {
+                aniListId = parts.find(p => !isNaN(p) && p.length > 0) || parts[1];
+            }
+
+            meta = await getAnimeMeta(aniListId);
             
             if (meta) {
                 // Strictly force the meta.id to match the requested ID, 
@@ -272,8 +283,13 @@ builder.defineMetaHandler(async ({ id }) => {
                 meta.id = id; 
                 searchTitle = meta.name;
             } else {
-                // Guard against undefined parts to prevent Node.js TypeErrors
-                searchTitle = parts[2] ? Buffer.from(parts[2], 'base64url').toString('utf8') : "Unknown";
+                // Guard against missing titles in the ID (e.g., from foreign catalogs)
+                // If parts[2] exists, we decode it. If not, we don't have a title.
+                // This forces a safe fallback instead of crashing Node.js with a TypeError.
+                searchTitle = (parts.length > 2 && parts[2]) 
+                    ? Buffer.from(parts[2], 'base64url').toString('utf8') 
+                    : "Unknown Anime";
+                
                 meta = { id, type: 'series', name: searchTitle, poster: generateDynamicPoster(searchTitle) };
             }
         } else if (id.startsWith('sukebei:')) {
@@ -339,8 +355,26 @@ builder.defineStreamHandler(async ({ id, config }) => {
         
         if (id.startsWith('anilist:')) {
             const parts = id.split(':');
-            searchTitle = parts[2] ? sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8')) : "";
-            if (parts.length >= 5) requestedEp = parseInt(parts[4], 10);
+            
+            // Robust parsing for foreign IDs
+            // If the addon is called by AIOMetadata, parts[2] (the Base64 title) is missing.
+            // We MUST have the title to search on Sukebei. 
+            // If it's missing from the ID, we fetch it live from AniList
+            if (parts.length > 2 && parts[2]) {
+                searchTitle = sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8'));
+            } else {
+                // Fallback: Fetch the title live from AniList using the ID
+                let aniListId = isNaN(parts[1]) ? parts.find(p => !isNaN(p) && p.length > 0) : parts[1];
+                if (aniListId) {
+                    const freshMeta = await getAnimeMeta(aniListId);
+                    if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
+                }
+            }
+            
+            // Safely extract requestedEp no matter its position in the array
+            const lastPart = parts[parts.length - 1];
+            if (!isNaN(lastPart) && parts.length > 2) requestedEp = parseInt(lastPart, 10);
+
         } else if (id.startsWith('sukebei:')) {
             const parts = id.split(':');
             searchTitle = parts[1] ? sanitizeSearchQuery(Buffer.from(parts[1], 'base64url').toString('utf8')) : "";
@@ -395,7 +429,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
                         if (extEp !== null) {
                             return extEp === currentEp;
                         }
-						
                         // Fallback: If no number is found (e.g. "eng.srt"), 
                         // isEpisodeMatch allows it through to prevent dropping valid generic files.
                         return isEpisodeMatch(name, currentEp);
