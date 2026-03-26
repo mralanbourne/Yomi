@@ -19,7 +19,7 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 // ============================================================================
 const manifest = {
     id: "org.community.yomi",
-    version: "5.2.1",
+    version: "5.2.2",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox. Smart-parsing tames chaotic torrent names for a clean catalog. Pure quality, zero buffering. Info: github.com/mralanbourne/Yomi",
@@ -117,7 +117,7 @@ function extractEpisodeNumber(filename) {
                         .replace(/\b(?:HEVC|AVC|FHD|HD|SD|10bit|8bit|10-bit|8-bit)\b/gi, '')
                         .replace(/\[[a-fA-F0-9]{8}\]/g, '') 
                         .replace(/\b(?:NC)?(?:OP|ED|Opening|Ending)\s*\d*\b/gi, ' ');
-	
+    
     // Stage 2: Explicit Markers (ep, episode, ova, s01e01)
     const explicitRegex = /(?:ep(?:isode)?\.?\s*|ova\s*|s\d+e)0*(\d+)(?:v\d)?\b/i;
     const explicitMatch = clean.match(explicitRegex);
@@ -150,7 +150,7 @@ function isEpisodeMatch(name, requestedEp) {
     // FIX 2: Priority Inversion - Always check for a specific episode number FIRST
     const extractedEp = extractEpisodeNumber(filename);
     if (extractedEp !== null) {
-	// If the parser found a specific number (e.g. "01"), it MUST match what the user clicked
+    // If the parser found a specific number (e.g. "01"), it MUST match what the user clicked
         return extractedEp === epNum;
     }
     // FIX 3: Only fall back to batch ranges if the file ITSELF has no specific episode number
@@ -189,7 +189,7 @@ function isTitleMatchingEpisode(title, requestedEp) {
     if (/batch|complete|all\s+episodes/i.test(title)) return true;
     return isEpisodeMatch(title, requestedEp);
 }
-	
+    
 /**
  * Generates an image-based placeholder poster for series not found in metadata APIs.
  */
@@ -213,8 +213,7 @@ function generateDynamicPoster(title) {
 // STREMIO HANDLERS
 // ============================================================================
 
-/**	
- * CATALOG HANDLER
+/** * CATALOG HANDLER
  * Provides lists of Anime to the Stremio UI (Trending, Top, Search).
  */
 builder.defineCatalogHandler(async ({ id, extra }) => {
@@ -378,16 +377,55 @@ builder.defineStreamHandler(async ({ id, config }) => {
 
             const { res, lang } = extractTags(t.title);
             const bytes = parseFloat(t.size) * 1024 * 1024 * 1024;
-            // Helper: Builds subtitle objects for Debrid cloud files
-            const buildSubs = (fileList, provider, apiKey) => {
+            
+            // ==========================================
+            // SUPERCHARGED SUBTITLE ENGINE
+            // ==========================================
+            // Ensure only subtitles matching the current episode are passed to the client.
+            // Also adds support for 13 distinct languages and appends the file extension to the UI.
+            const buildSubs = (fileList, provider, apiKey, currentEp) => {
                 if (!fileList) return [];
                 return fileList
-                    .filter(f => /\.(ass|srt|ssa|vtt|sub|idx)$/i.test(f.name))
+                    .filter(f => {
+                        const name = f.name || f.path || "";
+                        if (!/\.(ass|srt|ssa|vtt|sub|idx)$/i.test(name)) return false;
+                        
+                        const extEp = extractEpisodeNumber(name);
+                        // If the file explicitly has an episode number, it MUST match
+                        if (extEp !== null) {
+                            return extEp === currentEp;
+                        }
+						
+                        // Fallback: If no number is found (e.g. "eng.srt"), 
+                        // isEpisodeMatch allows it through to prevent dropping valid generic files.
+                        return isEpisodeMatch(name, currentEp);
+                    })
                     .map(f => {
-                        let subLang = 'English';
-                        if (/ger|deu|deutsch/i.test(f.name)) subLang = 'German';
-                        else if (/spa|esp/i.test(f.name)) subLang = 'Spanish';
-                        return { id: f.id, url: `${process.env.BASE_URL}/sub/${provider}/${apiKey}/${t.hash}/${f.id}`, lang: subLang };
+                        let subLang = 'English'; // Default Fallback
+                        const n = (f.name || f.path || "").toLowerCase();
+                        
+                        if (/ger|deu|deutsch/i.test(n)) subLang = 'German';
+                        else if (/spa|esp|spanish/i.test(n)) subLang = 'Spanish';
+                        else if (/rus|russian/i.test(n)) subLang = 'Russian';
+                        else if (/fre|fra|french/i.test(n)) subLang = 'French';
+                        else if (/ita|italian/i.test(n)) subLang = 'Italian';
+                        else if (/por|portuguese/i.test(n)) subLang = 'Portuguese';
+                        else if (/pol|polish/i.test(n)) subLang = 'Polish';
+                        else if (/chi|chinese|zho/i.test(n)) subLang = 'Chinese';
+                        else if (/ara|arabic/i.test(n)) subLang = 'Arabic';
+                        else if (/jpn|japanese/i.test(n)) subLang = 'Japanese';
+                        else if (/kor|korean/i.test(n)) subLang = 'Korean';
+                        else if (/hin|hindi/i.test(n)) subLang = 'Hindi';
+                        else if (/eng|english/i.test(n)) subLang = 'English';
+
+                        const extMatch = n.match(/\.(ass|srt|ssa|vtt|sub|idx)$/);
+                        const ext = extMatch ? extMatch[1].toUpperCase() : 'SUB';
+
+                        return { 
+                            id: f.id, 
+                            url: `${process.env.BASE_URL}/sub/${provider}/${apiKey}/${t.hash}/${f.id}`, 
+                            lang: `${subLang} (${ext})` 
+                        };
                     });
             };
 
@@ -395,14 +433,14 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 const fRD = rdC[hashLow];
                 const prog = rdA[hashLow];
                 const name = (fRD || prog === 100) ? `YOMI [⚡ RD]\n🎥 ${res}` : (prog !== undefined ? `YOMI [⏳ ${prog}% RD]\n🎥 ${res}` : `YOMI [☁️ RD DL]\n🎥 ${res}`);
-                streams.push({ name, title: displayTitle, url: `${process.env.BASE_URL}/resolve/realdebrid/${userConfig.rdKey}/${t.hash}/${requestedEp}`, subtitles: buildSubs(fRD, 'realdebrid', userConfig.rdKey), behaviorHints: { notWebReady: true, bingeGroup: `rd_${t.hash}` }, _bytes: bytes });
+                streams.push({ name, title: displayTitle, url: `${process.env.BASE_URL}/resolve/realdebrid/${userConfig.rdKey}/${t.hash}/${requestedEp}`, subtitles: buildSubs(fRD, 'realdebrid', userConfig.rdKey, requestedEp), behaviorHints: { notWebReady: true, bingeGroup: `rd_${t.hash}` }, _bytes: bytes });
             }
 
             if (userConfig.tbKey) {
                 const fTB = tbC[hashLow];
                 const prog = tbA[hashLow];
                 const name = (fTB || prog === 100) ? `YOMI [⚡ TB]\n🎥 ${res}` : (prog !== undefined ? `YOMI [⏳ ${prog}% TB]\n🎥 ${res}` : `YOMI [☁️ TB DL]\n🎥 ${res}`);
-                streams.push({ name, title: displayTitle, url: `${process.env.BASE_URL}/resolve/torbox/${userConfig.tbKey}/${t.hash}/${requestedEp}`, subtitles: buildSubs(fTB, 'torbox', userConfig.tbKey), behaviorHints: { notWebReady: true, bingeGroup: `tb_${t.hash}` }, _bytes: bytes });
+                streams.push({ name, title: displayTitle, url: `${process.env.BASE_URL}/resolve/torbox/${userConfig.tbKey}/${t.hash}/${requestedEp}`, subtitles: buildSubs(fTB, 'torbox', userConfig.tbKey, requestedEp), behaviorHints: { notWebReady: true, bingeGroup: `tb_${t.hash}` }, _bytes: bytes });
             }
         });
         
