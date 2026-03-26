@@ -13,6 +13,8 @@ const { getRouter } = require('stremio-addon-sdk');
 const { addonInterface } = require('./addon');
 
 const app = express();
+// Middleware to parse JSON data from frontend configurations
+app.use(express.json()); 
 const port = process.env.PORT || 7000;
 
 // Serve static assets (logos, images, and the waiting/loading video)
@@ -83,21 +85,25 @@ function getBatchRange(filename) {
  */
 function isEpisodeMatch(name, requestedEp) {
     const epNum = parseInt(requestedEp, 10);
-    // FIX 1: Isolate the filename from the full path to ignore misleading folder names
+    
+    // Isolate the filename from the full path to ignore misleading folder names
     const parts = name.split('/');
     const filename = parts[parts.length - 1];
-    // FIX 2: Priority Inversion - Always check for a specific episode number FIRST
+    
+    // Priority Inversion - Always check for a specific episode number FIRST
     const extractedEp = extractEpisodeNumber(filename);
     if (extractedEp !== null) {
-	// If the parser found a specific number (e.g. "01"), it MUST match what the user clicked
+    // If the parser found a specific number (e.g. "01"), it MUST match what the user clicked
         return extractedEp === epNum;
     }
-    // FIX 3: Only fall back to batch ranges if the file ITSELF has no specific episode number
-    // (e.g., the video file itself is named "Anime_01-12.mkv")
+    
+    // Only fall back to batch ranges if the file ITSELF has no specific episode number
+	// (e.g., the video file itself is named "Anime_01-12.mkv")
     const batch = getBatchRange(filename);
     if (batch && epNum >= batch.start && epNum <= batch.end) {
         return true;
     }
+    
     // Fallback for Single Episodes/Movies
     if (epNum === 1 && extractedEp === null) {
         return !/trailer|promo|menu|teaser|ncop|nced/i.test(filename);
@@ -159,10 +165,13 @@ app.get('/sub/:provider/:apiKey/:hash/:fileId', async (req, res) => {
 
         if (!downloadUrl) return res.status(404).send("Subtitle not found");
 
+        // Provide the correct MIME types depending on subtitle extension.
+        // Failing to provide application/x-subrip for .srt files causes Stremio to reject them silently.
         const ext = fileName.split('.').pop().toLowerCase();
         let mime = 'text/plain';
         if (ext === 'vtt') mime = 'text/vtt';
         else if (ext === 'ass' || ext === 'ssa') mime = 'text/x-ssa';
+        else if (ext === 'srt') mime = 'application/x-subrip';
         
         const subData = await axios.get(downloadUrl, { responseType: 'arraybuffer' });
         res.set('Content-Type', mime);
@@ -203,7 +212,22 @@ app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
             if (info.data.status !== "downloaded") {
                 if (info.data.status === "waiting_files_selection") {
                     const bestFile = selectEpisodeFile(info.data.files, requestedEp);
-                    await axios.post('https://api.real-debrid.com/rest/1.0/torrents/selectFiles/' + torrent.id, new URLSearchParams({ files: bestFile ? bestFile.id : info.data.files[0].id }), { headers: { Authorization: `Bearer ${apiKey}` } });
+                    
+                    const selectedIds = [];
+                    if (bestFile) selectedIds.push(bestFile.id);
+                    else selectedIds.push(info.data.files[0].id);
+
+                    // Blindly collect ALL subtitle files in the entire torrent
+                    // and force Real-Debrid to cache them alongside the selected video file.
+                    // This prevents external subtitle files from being dropped during initial RD caching.
+                    info.data.files.forEach(f => {
+                        const name = (f.path || f.name || "").toLowerCase();
+                        if (/\.(ass|srt|ssa|vtt|sub|idx)$/.test(name)) {
+                            if (!selectedIds.includes(f.id)) selectedIds.push(f.id);
+                        }
+                    });
+
+                    await axios.post('https://api.real-debrid.com/rest/1.0/torrents/selectFiles/' + torrent.id, new URLSearchParams({ files: selectedIds.join(',') }), { headers: { Authorization: `Bearer ${apiKey}` } });
                 }
                 return serveLoadingVideo(req, res);
             }
