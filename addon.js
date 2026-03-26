@@ -16,11 +16,10 @@ const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require('./lib/de
 
 // ============================================================================
 // ADDON MANIFEST
-// Defines the addon's identity and capabilities for the Stremio client.
 // ============================================================================
 const manifest = {
     id: "org.community.yomi",
-    version: "5.2.0",
+    version: "5.2.1",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox. Smart-parsing tames chaotic torrent names for a clean catalog. Pure quality, zero buffering. Info: github.com/mralanbourne/Yomi",
@@ -95,7 +94,6 @@ function sanitizeSearchQuery(title) {
 // ============================================================================
 // ADVANCED EPISODE EXTRACTION ENGINE
 // ============================================================================
-
 /**
  * Detects if a filename represents a "Batch" (e.g., "01-12") or a single episode.
  */
@@ -119,19 +117,17 @@ function extractEpisodeNumber(filename) {
                         .replace(/\b(?:HEVC|AVC|FHD|HD|SD|10bit|8bit|10-bit|8-bit)\b/gi, '')
                         .replace(/\[[a-fA-F0-9]{8}\]/g, '') 
                         .replace(/\b(?:NC)?(?:OP|ED|Opening|Ending)\s*\d*\b/gi, ' ');
-
+	
     // Stage 2: Explicit Markers (ep, episode, ova, s01e01)
     const explicitRegex = /(?:ep(?:isode)?\.?\s*|ova\s*|s\d+e)0*(\d+)(?:v\d)?\b/i;
     const explicitMatch = clean.match(explicitRegex);
     if (explicitMatch) return parseInt(explicitMatch[1], 10);
-
     // Stage 3: Isolation Checks (e.g. " - 01 ")
     const dashMatch = clean.match(/(?:^|\s)\-\s+0*(\d+)(?:v\d)?(?:$|\s)/i);
     if (dashMatch) return parseInt(dashMatch[1], 10);
     
     const bracketMatch = clean.match(/\[0*(\d+)(?:v\d)?\]|\(0*(\d+)(?:v\d)?\)/i);
     if (bracketMatch) return parseInt(bracketMatch[1] || bracketMatch[2], 10);
-
     // Stage 4: Positional Fallback (Takes the last isolated number)
     clean = clean.replace(/[\[\]\(\)\{\}_\-\+~,]/g, ' ').trim();
     const tokens = clean.split(/\s+/);
@@ -181,7 +177,7 @@ function isTitleMatchingEpisode(title, requestedEp) {
     if (/batch|complete|all\s+episodes/i.test(title)) return true;
     return isEpisodeMatch(title, requestedEp);
 }
-
+	
 /**
  * Generates an image-based placeholder poster for series not found in metadata APIs.
  */
@@ -198,14 +194,14 @@ function generateDynamicPoster(title) {
         } else { line += word + " "; }
     }
     if (line) lines.push(line.trim());
-    return `https://dummyimage.com/600x900/1a1a1a/e91e63.png&text=${encodeURIComponent(lines.join('\n'))}`;
+    return `https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=${encodeURIComponent(lines.join('\n'))}`;
 }
 
 // ============================================================================
 // STREMIO HANDLERS
 // ============================================================================
 
-/**
+/**	
  * CATALOG HANDLER
  * Provides lists of Anime to the Stremio UI (Trending, Top, Search).
  */
@@ -254,50 +250,69 @@ builder.defineMetaHandler(async ({ id }) => {
     let meta = null;
     let searchTitle = "";
 
-    if (id.startsWith('anilist:')) {
-        const parts = id.split(':');
-        meta = await getAnimeMeta(parts[1]);
-        searchTitle = meta ? meta.name : Buffer.from(parts[2], 'base64url').toString('utf8');
-        if (!meta) meta = { id, type: 'series', name: searchTitle, poster: generateDynamicPoster(searchTitle) };
-    } else if (id.startsWith('sukebei:')) {
-        searchTitle = Buffer.from(id.split(':')[1], 'base64url').toString('utf8');
-        let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
-        const malData = await getJikanMeta(cleanQuery);
-        if (malData) {
-            meta = { 
-                id, type: 'series', name: searchTitle.replace(/^\[.*?\]\s*/g, '').trim(), 
-                poster: malData.poster || generateDynamicPoster(searchTitle),
-                background: malData.background, description: malData.description, episodes: malData.episodes
-            };
-        } else {
-            meta = { id, type: 'series', name: searchTitle.replace(/^\[.*?\]\s*/g, '').trim(), poster: generateDynamicPoster(searchTitle) };
+    try {
+        if (id.startsWith('anilist:')) {
+            const parts = id.split(':');
+            meta = await getAnimeMeta(parts[1]);
+            
+            if (meta) {
+                // Strictly force the meta.id to match the requested ID, 
+                // otherwise Stremio drops the payload and shows "Invalid ID".
+                meta.id = id; 
+                searchTitle = meta.name;
+            } else {
+                // Guard against undefined parts to prevent Node.js TypeErrors
+                searchTitle = parts[2] ? Buffer.from(parts[2], 'base64url').toString('utf8') : "Unknown";
+                meta = { id, type: 'series', name: searchTitle, poster: generateDynamicPoster(searchTitle) };
+            }
+        } else if (id.startsWith('sukebei:')) {
+            const base64Str = id.split(':')[1];
+            searchTitle = base64Str ? Buffer.from(base64Str, 'base64url').toString('utf8') : "Unknown";
+            let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
+            const malData = await getJikanMeta(cleanQuery);
+            if (malData) {
+                meta = { 
+                    id, type: 'series', name: searchTitle.replace(/^\[.*?\]\s*/g, '').trim(), 
+                    poster: malData.poster || generateDynamicPoster(searchTitle),
+                    background: malData.background, description: malData.description, episodes: malData.episodes
+                };
+            } else {
+                meta = { id, type: 'series', name: searchTitle.replace(/^\[.*?\]\s*/g, '').trim(), poster: generateDynamicPoster(searchTitle) };
+            }
         }
-    }
+        
+        // Dynamic Episode Detection: Scans Sukebei to find the highest episode number if API meta is insufficient.
+        meta.type = 'series';
+        let epCount = meta.episodes || 1;
+        if (epCount === 1 || !meta.episodes) {
+            try {
+                const torrents = await searchSukebeiForHentai(searchTitle);
+                let maxDetected = 1;
+                torrents.forEach(t => {
+                    const batch = getBatchRange(t.title);
+                    if (batch && batch.end > maxDetected && batch.end < 50) maxDetected = batch.end;
+                    const ext = extractEpisodeNumber(t.title);
+                    if (ext && ext > maxDetected && ext < 50) maxDetected = ext;
+                });
+                if (maxDetected > epCount) epCount = maxDetected;
+            } catch(e) {}
+        }
 
-    // Dynamic Episode Detection: Scans Sukebei to find the highest episode number if API meta is insufficient.
-    meta.type = 'series';
-    let epCount = meta.episodes || 1;
-    if (epCount === 1 || !meta.episodes) {
-        try {
-            const torrents = await searchSukebeiForHentai(searchTitle);
-            let maxDetected = 1;
-            torrents.forEach(t => {
-                const batch = getBatchRange(t.title);
-                if (batch && batch.end > maxDetected && batch.end < 50) maxDetected = batch.end;
-                const ext = extractEpisodeNumber(t.title);
-                if (ext && ext > maxDetected && ext < 50) maxDetected = ext;
-            });
-            if (maxDetected > epCount) epCount = maxDetected;
-        } catch(e) {}
+        const videos = [];
+        const episodeThumbnail = meta.background || meta.poster || "https://dummyimage.com/600x337/1a1a1a/e91e63.png?text=YOMI+EPISODE";
+        for (let i = 1; i <= epCount; i++) {
+            videos.push({ id: `${id}:1:${i}`, title: `Episode ${i}`, season: 1, episode: i, released: new Date().toISOString(), thumbnail: episodeThumbnail });
+        }
+        meta.videos = videos;
+        return { meta, cacheMaxAge: 604800 };
+    } catch (err) {
+        console.error("Meta handler crashed:", err.message);
+        // Fallback meta so Stremio doesn't hard-crash into Invalid ID if something breaks
+        return { 
+            meta: { id, type: 'series', name: "Unknown (Error)", poster: generateDynamicPoster("Error") }, 
+            cacheMaxAge: 60 
+        };
     }
-
-    const videos = [];
-    const episodeThumbnail = meta.background || meta.poster || "https://dummyimage.com/600x337/1a1a1a/e91e63.png&text=YOMI+EPISODE";
-    for (let i = 1; i <= epCount; i++) {
-        videos.push({ id: `${id}:1:${i}`, title: `Episode ${i}`, season: 1, episode: i, released: new Date().toISOString(), thumbnail: episodeThumbnail });
-    }
-    meta.videos = videos;
-    return { meta, cacheMaxAge: 604800 };
 });
 
 /**
@@ -307,78 +322,83 @@ builder.defineMetaHandler(async ({ id }) => {
 builder.defineStreamHandler(async ({ id, config }) => {
     if (!id.startsWith('anilist:') && !id.startsWith('sukebei:')) return Promise.resolve({ streams: [] });
 
-    const userConfig = parseConfig(config);
-    let searchTitle = "", requestedEp = 1;
-    
-    if (id.startsWith('anilist:')) {
-        const parts = id.split(':');
-        searchTitle = sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8'));
-        if (parts.length >= 5) requestedEp = parseInt(parts[4], 10);
-    } else if (id.startsWith('sukebei:')) {
-        const parts = id.split(':');
-        searchTitle = sanitizeSearchQuery(Buffer.from(parts[1], 'base64url').toString('utf8'));
-        if (parts.length >= 4) requestedEp = parseInt(parts[3], 10);
+    try {
+        const userConfig = parseConfig(config);
+        let searchTitle = "", requestedEp = 1;
+        
+        if (id.startsWith('anilist:')) {
+            const parts = id.split(':');
+            searchTitle = parts[2] ? sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8')) : "";
+            if (parts.length >= 5) requestedEp = parseInt(parts[4], 10);
+        } else if (id.startsWith('sukebei:')) {
+            const parts = id.split(':');
+            searchTitle = parts[1] ? sanitizeSearchQuery(Buffer.from(parts[1], 'base64url').toString('utf8')) : "";
+            if (parts.length >= 4) requestedEp = parseInt(parts[3], 10);
+        }
+
+        if (!searchTitle) return { streams: [] };
+
+        let torrents = await searchSukebeiForHentai(searchTitle);
+        if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
+
+        const hashes = torrents.map(t => t.hash);
+        const [rdC, tbC, rdA, tbA] = await Promise.all([
+            userConfig.rdKey ? checkRD(hashes, userConfig.rdKey) : {},
+            userConfig.tbKey ? checkTorbox(hashes, userConfig.tbKey) : {},
+            userConfig.rdKey ? getActiveRD(userConfig.rdKey) : {},
+            userConfig.tbKey ? getActiveTorbox(userConfig.tbKey) : {}
+        ]);
+
+        const streams = [];
+        torrents.forEach(t => {
+            const hashLow = t.hash.toLowerCase();
+            const files = rdC[hashLow] || tbC[hashLow];
+            let displayTitle = `🌐 Sukebei Network\n💾 ${t.size} | 👤 ${t.seeders}`;
+            
+            if (files) {
+                const matchedFile = findEpisodeInFiles(files, requestedEp);
+                if (!matchedFile) return; 
+                displayTitle += `\n🎯 File: ${matchedFile.name}`;
+            } else {
+                if (!isTitleMatchingEpisode(t.title, requestedEp)) return; 
+                displayTitle += `\n📄 ${t.title}`;
+            }
+
+            const { res, lang } = extractTags(t.title);
+            const bytes = parseFloat(t.size) * 1024 * 1024 * 1024;
+            // Helper: Builds subtitle objects for Debrid cloud files
+            const buildSubs = (fileList, provider, apiKey) => {
+                if (!fileList) return [];
+                return fileList
+                    .filter(f => /\.(ass|srt|ssa|vtt|sub|idx)$/i.test(f.name))
+                    .map(f => {
+                        let subLang = 'English';
+                        if (/ger|deu|deutsch/i.test(f.name)) subLang = 'German';
+                        else if (/spa|esp/i.test(f.name)) subLang = 'Spanish';
+                        return { id: f.id, url: `${process.env.BASE_URL}/sub/${provider}/${apiKey}/${t.hash}/${f.id}`, lang: subLang };
+                    });
+            };
+
+            if (userConfig.rdKey) {
+                const fRD = rdC[hashLow];
+                const prog = rdA[hashLow];
+                const name = (fRD || prog === 100) ? `YOMI [⚡ RD]\n🎥 ${res}` : (prog !== undefined ? `YOMI [⏳ ${prog}% RD]\n🎥 ${res}` : `YOMI [☁️ RD DL]\n🎥 ${res}`);
+                streams.push({ name, title: displayTitle, url: `${process.env.BASE_URL}/resolve/realdebrid/${userConfig.rdKey}/${t.hash}/${requestedEp}`, subtitles: buildSubs(fRD, 'realdebrid', userConfig.rdKey), behaviorHints: { notWebReady: true, bingeGroup: `rd_${t.hash}` }, _bytes: bytes });
+            }
+
+            if (userConfig.tbKey) {
+                const fTB = tbC[hashLow];
+                const prog = tbA[hashLow];
+                const name = (fTB || prog === 100) ? `YOMI [⚡ TB]\n🎥 ${res}` : (prog !== undefined ? `YOMI [⏳ ${prog}% TB]\n🎥 ${res}` : `YOMI [☁️ TB DL]\n🎥 ${res}`);
+                streams.push({ name, title: displayTitle, url: `${process.env.BASE_URL}/resolve/torbox/${userConfig.tbKey}/${t.hash}/${requestedEp}`, subtitles: buildSubs(fTB, 'torbox', userConfig.tbKey), behaviorHints: { notWebReady: true, bingeGroup: `tb_${t.hash}` }, _bytes: bytes });
+            }
+        });
+        
+        // Sort streams: Cached (lightning bolt) first, then by size (highest quality)
+        return { streams: streams.sort((a,b) => (a.name.includes('⚡') ? -1 : 1) || (b._bytes - a._bytes)), cacheMaxAge: 5 };
+    } catch (err) {
+        return { streams: [] };
     }
-
-    let torrents = await searchSukebeiForHentai(searchTitle);
-    if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
-
-    const hashes = torrents.map(t => t.hash);
-    const [rdC, tbC, rdA, tbA] = await Promise.all([
-        userConfig.rdKey ? checkRD(hashes, userConfig.rdKey) : {},
-        userConfig.tbKey ? checkTorbox(hashes, userConfig.tbKey) : {},
-        userConfig.rdKey ? getActiveRD(userConfig.rdKey) : {},
-        userConfig.tbKey ? getActiveTorbox(userConfig.tbKey) : {}
-    ]);
-
-    const streams = [];
-    torrents.forEach(t => {
-        const hashLow = t.hash.toLowerCase();
-        const files = rdC[hashLow] || tbC[hashLow];
-        let displayTitle = `🌐 Sukebei Network\n💾 ${t.size} | 👤 ${t.seeders}`;
-        
-        if (files) {
-            const matchedFile = findEpisodeInFiles(files, requestedEp);
-            if (!matchedFile) return; 
-            displayTitle += `\n🎯 File: ${matchedFile.name}`;
-        } else {
-            if (!isTitleMatchingEpisode(t.title, requestedEp)) return; 
-            displayTitle += `\n📄 ${t.title}`;
-        }
-
-        const { res, lang } = extractTags(t.title);
-        const bytes = parseFloat(t.size) * 1024 * 1024 * 1024;
-        
-        // Helper: Builds subtitle objects for Debrid cloud files
-        const buildSubs = (fileList, provider, apiKey) => {
-            if (!fileList) return [];
-            return fileList
-                .filter(f => /\.(ass|srt|ssa|vtt|sub|idx)$/i.test(f.name))
-                .map(f => {
-                    let subLang = 'English';
-                    if (/ger|deu|deutsch/i.test(f.name)) subLang = 'German';
-                    else if (/spa|esp/i.test(f.name)) subLang = 'Spanish';
-                    return { id: f.id, url: `${process.env.BASE_URL}/sub/${provider}/${apiKey}/${t.hash}/${f.id}`, lang: subLang };
-                });
-        };
-
-        if (userConfig.rdKey) {
-            const fRD = rdC[hashLow];
-            const prog = rdA[hashLow];
-            const name = (fRD || prog === 100) ? `YOMI [⚡ RD]\n🎥 ${res}` : (prog !== undefined ? `YOMI [⏳ ${prog}% RD]\n🎥 ${res}` : `YOMI [☁️ RD DL]\n🎥 ${res}`);
-            streams.push({ name, title: displayTitle, url: `${process.env.BASE_URL}/resolve/realdebrid/${userConfig.rdKey}/${t.hash}/${requestedEp}`, subtitles: buildSubs(fRD, 'realdebrid', userConfig.rdKey), behaviorHints: { notWebReady: true, bingeGroup: `rd_${t.hash}` }, _bytes: bytes });
-        }
-
-        if (userConfig.tbKey) {
-            const fTB = tbC[hashLow];
-            const prog = tbA[hashLow];
-            const name = (fTB || prog === 100) ? `YOMI [⚡ TB]\n🎥 ${res}` : (prog !== undefined ? `YOMI [⏳ ${prog}% TB]\n🎥 ${res}` : `YOMI [☁️ TB DL]\n🎥 ${res}`);
-            streams.push({ name, title: displayTitle, url: `${process.env.BASE_URL}/resolve/torbox/${userConfig.tbKey}/${t.hash}/${requestedEp}`, subtitles: buildSubs(fTB, 'torbox', userConfig.tbKey), behaviorHints: { notWebReady: true, bingeGroup: `tb_${t.hash}` }, _bytes: bytes });
-        }
-    });
-
-    // Sort streams: Cached (lightning bolt) first, then by size (highest quality)
-    return { streams: streams.sort((a,b) => (a.name.includes('⚡') ? -1 : 1) || (b._bytes - a._bytes)), cacheMaxAge: 5 };
 });
 
 module.exports = { addonInterface: builder.getInterface(), manifest, parseConfig };
