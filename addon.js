@@ -23,7 +23,7 @@ const manifest = {
     version: "5.1.5",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
-    description: "Your Ultimate NSFW Sukebei Gateway. Auto-parses all messy uploads as best it can. Always verify torrent titles! Info & Help: github:mralanbourne/Yomi",
+    description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox. Smart-parsing tames chaotic torrent names for a clean catalog. Pure quality, zero buffering. Info: github.com/mralanbourne/Yomi",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
     idPrefixes: ["anilist:", "sukebei:"],
