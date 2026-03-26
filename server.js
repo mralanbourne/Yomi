@@ -78,14 +78,29 @@ function getBatchRange(filename) {
     return null;
 }
 
+/**
+ * Checks if a filename matches the requested episode, accounting for Batches.
+ */
 function isEpisodeMatch(name, requestedEp) {
     const epNum = parseInt(requestedEp, 10);
-    const batch = getBatchRange(name);
-    if (batch && epNum >= batch.start && epNum <= batch.end) return true;
-    const extractedEp = extractEpisodeNumber(name);
-    if (extractedEp !== null) return extractedEp === epNum;
+    // FIX 1: Isolate the filename from the full path to ignore misleading folder names
+    const parts = name.split('/');
+    const filename = parts[parts.length - 1];
+    // FIX 2: Priority Inversion - Always check for a specific episode number FIRST
+    const extractedEp = extractEpisodeNumber(filename);
+    if (extractedEp !== null) {
+	// If the parser found a specific number (e.g. "01"), it MUST match what the user clicked
+        return extractedEp === epNum;
+    }
+    // FIX 3: Only fall back to batch ranges if the file ITSELF has no specific episode number
+    // (e.g., the video file itself is named "Anime_01-12.mkv")
+    const batch = getBatchRange(filename);
+    if (batch && epNum >= batch.start && epNum <= batch.end) {
+        return true;
+    }
+    // Fallback for Single Episodes/Movies
     if (epNum === 1 && extractedEp === null) {
-        return !/trailer|promo|menu|teaser/i.test(name);
+        return !/trailer|promo|menu|teaser|ncop|nced/i.test(filename);
     }
     return false;
 }
