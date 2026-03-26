@@ -19,7 +19,6 @@ const port = process.env.PORT || 7000;
 // Serve static assets (logos, images, and the waiting/loading video)
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'static')));
-
 // HEALTH CHECK: Pinging this to trick hosting providers (like Koyeb) into keeping the instance running.
 app.get('/health', (req, res) => res.status(200).json({ status: 'alive' }));
 
@@ -87,7 +86,7 @@ function isEpisodeMatch(name, requestedEp) {
     }
     
     // Only fall back to batch ranges if the file ITSELF has no specific episode number
-	// (e.g., the video file itself is named "Anime_01-12.mkv")
+    // (e.g., the video file itself is named "Anime_01-12.mkv")
     const batch = getBatchRange(filename);
     if (batch && epNum >= batch.start && epNum <= batch.end) {
         return true;
@@ -99,10 +98,10 @@ function isEpisodeMatch(name, requestedEp) {
     }
     return false;
 }
-/**
- * Selects the most appropriate file from a list for the requested episode.
- * Prioritizes MKV and larger file sizes (better quality).
- */
+	
+
+ // Selects the most appropriate file from a list for the requested episode.
+ // Prioritizes MKV and larger file sizes (better quality).
 function selectEpisodeFile(files, requestedEp) {
     if (!files || files.length === 0) return null;
     const videoFiles = files.filter(f => /\.(mkv|mp4|avi|wmv)$/i.test(f.name || f.path || ""));
@@ -161,7 +160,7 @@ app.get('/sub/:provider/:apiKey/:hash/:fileId', async (req, res) => {
         return res.send(subData.data);
     } catch (e) { res.status(500).send("Error fetching subtitle"); }
 });
-	
+    
 /**
  * Helper: Redirects to a local loading video while Debrid is preparing the file.
  */
@@ -169,10 +168,11 @@ function serveLoadingVideo(req, res) {
     const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
     res.redirect(`${protocol}://${req.headers.host}/waiting.mp4`);
 }
+
 // ============================================================================
 // STREAM RESOLVER
 // Converts a Torrent Hash + Episode Number into a playable direct link.
-// Handles magnet addition, file selection, and unrestricting on the fly.	
+// Handles magnet addition, file selection, and unrestricting on the fly.    
 // ============================================================================
 app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
     const { provider, apiKey, hash, episode } = req.params;
@@ -221,16 +221,29 @@ app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
             
             const fresh = await axios.get(`https://api.real-debrid.com/rest/1.0/torrents/info/${torrent.id}`, { headers: { Authorization: `Bearer ${apiKey}` } });
             
-
-            // Since we're now downloading multiple files (video + subtitles), fresh.data.links also has multiple entries.
-            // find the link that belongs to the VIDEO, otherwise Stremio will stream a text file.
+            // Robust Link Selection
+            // We explicitly match the generated RD link with the selected video file.
+            // Since fresh.data.links only contains links for *selected* files, their order 
+            // does not always perfectly match the raw files array. We must count manually.
             const bestFileFresh = selectEpisodeFile(fresh.data.files, requestedEp);
-            const selectedFiles = fresh.data.files.filter(f => f.selected === 1);
-            let videoIdx = selectedFiles.findIndex(f => f.id === (bestFileFresh ? bestFileFresh.id : -1));
+            const targetFileIndex = fresh.data.files.findIndex(f => f.id === (bestFileFresh ? bestFileFresh.id : -1));
             
-            if (videoIdx === -1) videoIdx = 0; // Fallback
+            let targetLink = fresh.data.links[0]; // Absolute Fallback
+            
+            if (targetFileIndex !== -1) {
+                let linkCounter = 0;
+                for (let i = 0; i < fresh.data.files.length; i++) {
+                    if (i === targetFileIndex) {
+                        targetLink = fresh.data.links[linkCounter];
+                        break;
+                    }
+                    if (fresh.data.files[i].selected === 1) {
+                        linkCounter++;
+                    }
+                }
+            }
 
-            const unrestrict = await axios.post('https://api.real-debrid.com/rest/1.0/unrestrict/link', new URLSearchParams({ link: fresh.data.links[videoIdx] }), { headers: { Authorization: `Bearer ${apiKey}` } });
+            const unrestrict = await axios.post('https://api.real-debrid.com/rest/1.0/unrestrict/link', new URLSearchParams({ link: targetLink }), { headers: { Authorization: `Bearer ${apiKey}` } });
             return res.redirect(unrestrict.data.download);
         }
         if (provider === "torbox") {
@@ -248,6 +261,6 @@ app.get('/resolve/:provider/:apiKey/:hash/:episode?', async (req, res) => {
         }
     } catch (e) { return serveLoadingVideo(req, res); }
 });
-// Register the Stremio Addon SDK Router
+
 app.use('/', getRouter(addonInterface));
 app.listen(port, () => console.log(`YOMI ONLINE | PORT ${port}`));
