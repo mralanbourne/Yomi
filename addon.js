@@ -219,6 +219,8 @@ function generateDynamicPoster(title) {
  * Provides lists of Anime to the Stremio UI (Trending, Top, Search).
  */
 builder.defineCatalogHandler(async ({ id, extra }) => {
+    console.log(`[Catalog Request] Fetching catalog: ${id}`);
+    
     if (id === "sukebei_trending") return { metas: await getTrendingAdultAnime(), cacheMaxAge: 43200 };
     if (id === "sukebei_top") return { metas: await getTopAdultAnime(), cacheMaxAge: 43200 };
     
@@ -260,6 +262,8 @@ builder.defineMetaHandler(async ({ id }) => {
         return Promise.resolve({ meta: null });
     }
 
+    console.log(`[Meta Request] Fetching details for ID: ${id}`);
+
     let meta = null;
     let searchTitle = "";
 
@@ -268,18 +272,18 @@ builder.defineMetaHandler(async ({ id }) => {
             const parts = id.split(':');
             
             // Robust parsing for foreign addons (like AIOMetadata)
+            let aniListId = parts[1];
             // We check if parts[1] is actually a number. If not (e.g., 'anilist:anime:12345'), 
             // we look for the first number in the array.
-            let aniListId = parts[1];
             if (isNaN(aniListId)) {
                 aniListId = parts.find(p => !isNaN(p) && p.length > 0) || parts[1];
             }
-
+	
             const rawMeta = await getAnimeMeta(aniListId);
-            
+            	
             if (rawMeta) {
-                // Strictly force the meta.id to match the requested ID, 
-                // otherwise Stremio drops the payload and shows "Invalid ID".
+            // Strictly force the meta.id to match the requested ID,
+            // otherwise Stremio drops the payload and shows "Invalid ID".
                 searchTitle = rawMeta.name;
                 meta = {
                     id: id,
@@ -293,9 +297,10 @@ builder.defineMetaHandler(async ({ id }) => {
                     episodes: rawMeta.episodes
                 };
             } else {
-                // Guard against missing titles in the ID (e.g., from foreign catalogs)
-                // If parts[2] exists, we decode it. If not, we don't have a title.
-                // This forces a safe fallback instead of crashing Node.js with a TypeError.
+                	
+            // Guard against missing titles in the ID (e.g., from foreign catalogs)
+            // If parts[2] exists, we decode it. If not, we don't have a title.
+            // This forces a safe fallback instead of crashing Node.js with a TypeError.
                 searchTitle = (parts.length > 2 && parts[2]) 
                     ? Buffer.from(parts[2], 'base64url').toString('utf8') 
                     : "Unknown Anime";
@@ -328,6 +333,7 @@ builder.defineMetaHandler(async ({ id }) => {
         meta.type = 'series';
         let epCount = meta.episodes || 1;
         if (epCount === 1 || !meta.episodes) {
+            console.log(`[Meta] 🔍 Scraping Sukebei to detect actual episode count for OVA/Unknown: "${searchTitle}"`);
             try {
                 const torrents = await searchSukebeiForHentai(searchTitle);
                 let maxDetected = 1;
@@ -339,6 +345,8 @@ builder.defineMetaHandler(async ({ id }) => {
                 });
                 if (maxDetected > epCount) epCount = maxDetected;
             } catch(e) {}
+        } else {
+            console.log(`[Meta] ⚡ Fast-loading: Episode count known (${epCount}) for "${searchTitle}". Skipping Sukebei scrape.`);
         }
 
         const videos = [];
@@ -349,7 +357,7 @@ builder.defineMetaHandler(async ({ id }) => {
         meta.videos = videos;
         return { meta, cacheMaxAge: 604800 };
     } catch (err) {
-        console.error("Meta handler crashed:", err.message);
+        console.error(`[Meta Error] Crashed during meta generation: ${err.message}`);
         // Fallback meta so Stremio doesn't hard-crash into Invalid ID if something breaks
         return { 
             meta: { id, type: 'series', name: "Unknown (Error)", poster: generateDynamicPoster("Error") }, 
@@ -364,13 +372,17 @@ builder.defineMetaHandler(async ({ id }) => {
  */
 builder.defineStreamHandler(async ({ id, config }) => {
     if (!id.startsWith('anilist:') && !id.startsWith('sukebei:')) return Promise.resolve({ streams: [] });
+    
+    console.log(`[Stream Request] Processing request for ID: ${id}`);
 
     try {
         const userConfig = parseConfig(config);
         let searchTitle = "", requestedEp = 1;
+        let aniListIdForFallback = null;
         
         if (id.startsWith('anilist:')) {
             const parts = id.split(':');
+            aniListIdForFallback = isNaN(parts[1]) ? parts.find(p => !isNaN(p) && p.length > 0) : parts[1];
             
             // Robust parsing for foreign IDs
             // If the addon is called by AIOMetadata, parts[2] (the Base64 title) is missing.
@@ -380,9 +392,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 searchTitle = sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8'));
             } else {
                 // Fallback: Fetch the title live from AniList using the ID
-                let aniListId = isNaN(parts[1]) ? parts.find(p => !isNaN(p) && p.length > 0) : parts[1];
-                if (aniListId) {
-                    const freshMeta = await getAnimeMeta(aniListId);
+                if (aniListIdForFallback) {
+                    const freshMeta = await getAnimeMeta(aniListIdForFallback);
                     if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
                 }
             }
@@ -397,10 +408,67 @@ builder.defineStreamHandler(async ({ id, config }) => {
             if (parts.length >= 4) requestedEp = parseInt(parts[3], 10);
         }
 
-        if (!searchTitle) return { streams: [] };
+        if (!searchTitle) {
+            console.log(`[Stream] Search aborted. No valid title found for ID: ${id}`);
+            return { streams: [] };
+        }
+        
+        console.log(`[Stream] 🔍 Scraping Sukebei for streams: "${searchTitle}" (Episode ${requestedEp})`);
 
         let torrents = await searchSukebeiForHentai(searchTitle);
-        if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
+        
+        // ========================================================================
+        // FALLBACK ENGINE: Solves Romaji Mismatch
+        // If the primary Romaji search fails, cycle through English and Synonyms
+        // for both AniList and Sukebei (MAL) base queries.
+        // ========================================================================
+        if (!torrents.length) {
+            console.log(`[Stream] ❌ No torrents found for primary title: "${searchTitle}". Engaging Universal Fallback Engine...`);
+            
+            let fallbackMeta = null;
+
+            // Fetch metadata based on the origin of the ID to extract synonyms
+            if (aniListIdForFallback) {
+                fallbackMeta = await getAnimeMeta(aniListIdForFallback);
+            } else if (id.startsWith('sukebei:')) {
+                // For MAL/Sukebei fallback IDs, fetch from Jikan
+                let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
+                fallbackMeta = await getJikanMeta(cleanQuery);
+            }
+            
+            if (fallbackMeta) {
+                const fallbackTitles = new Set();
+                
+                // Add the English translation if available
+                if (fallbackMeta.altName && fallbackMeta.altName.length > 2 && fallbackMeta.altName !== searchTitle) {
+                    fallbackTitles.add(fallbackMeta.altName);
+                }
+                
+                // Add all Synonyms (e.g. "Shikijou Kyoudan")
+                if (fallbackMeta.synonyms && fallbackMeta.synonyms.length > 0) {
+                    fallbackMeta.synonyms.forEach(syn => {
+                        // Only add synonyms that use standard latin letters (ignore raw Kanji/Hiragana)
+                        if (/^[a-zA-Z0-9\s\-_!:]+$/.test(syn)) fallbackTitles.add(syn);
+                    });
+                }
+
+                for (const altTitle of fallbackTitles) {
+                    console.log(`[Stream] 🔄 Fallback Engine: Searching Sukebei for synonym: "${altTitle}"`);
+                    const cleanAlt = sanitizeSearchQuery(altTitle);
+                    torrents = await searchSukebeiForHentai(cleanAlt);
+                    
+                    if (torrents.length > 0) {
+                        console.log(`[Stream] ✅ Success! Found ${torrents.length} torrents using synonym: "${cleanAlt}"`);
+                        break; // Stop searching once we found a working translation
+                    }
+                }
+            }
+        }
+
+        if (!torrents.length) {
+            console.log(`[Stream] ❌ All searches failed. No streams available.`);
+            return { streams: [], cacheMaxAge: 60 };
+        }
 
         const hashes = torrents.map(t => t.hash);
         const [rdC, tbC, rdA, tbA] = await Promise.all([
@@ -439,14 +507,14 @@ builder.defineStreamHandler(async ({ id, config }) => {
                     .filter(f => {
                         const name = f.name || f.path || "";
                         if (!/\.(ass|srt|ssa|vtt|sub|idx)$/i.test(name)) return false;
-                        
                         const extEp = extractEpisodeNumber(name);
-                        // If the file explicitly has an episode number, it MUST match
+           // If the file explicitly has an episode number, it MUST match
                         if (extEp !== null) {
                             return extEp === currentEp;
                         }
-                        // Fallback: If no number is found (e.g. "eng.srt"), 
-                        // isEpisodeMatch allows it through to prevent dropping valid generic files.
+                        
+            // Fallback: If no number is found (e.g. "eng.srt"), 
+            // isEpisodeMatch allows it through to prevent dropping valid generic files.
                         return isEpisodeMatch(name, currentEp);
                     })
                     .map(f => {
@@ -496,6 +564,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
         // Sort streams: Cached (lightning bolt) first, then by size (highest quality)
         return { streams: streams.sort((a,b) => (a.name.includes('⚡') ? -1 : 1) || (b._bytes - a._bytes)), cacheMaxAge: 5 };
     } catch (err) {
+        console.error(`[Stream Error] Crashed during stream generation: ${err.message}`);
         return { streams: [] };
     }
 });
