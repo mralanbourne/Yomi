@@ -275,13 +275,23 @@ builder.defineMetaHandler(async ({ id }) => {
                 aniListId = parts.find(p => !isNaN(p) && p.length > 0) || parts[1];
             }
 
-            meta = await getAnimeMeta(aniListId);
+            const rawMeta = await getAnimeMeta(aniListId);
             
-            if (meta) {
+            if (rawMeta) {
                 // Strictly force the meta.id to match the requested ID, 
                 // otherwise Stremio drops the payload and shows "Invalid ID".
-                meta.id = id; 
-                searchTitle = meta.name;
+                searchTitle = rawMeta.name;
+                meta = {
+                    id: id,
+                    type: rawMeta.type,
+                    name: rawMeta.name,
+                    poster: rawMeta.poster,
+                    background: rawMeta.background,
+                    description: rawMeta.description,
+                    releaseInfo: rawMeta.releaseInfo,
+                    released: rawMeta.released,
+                    episodes: rawMeta.episodes
+                };
             } else {
                 // Guard against missing titles in the ID (e.g., from foreign catalogs)
                 // If parts[2] exists, we decode it. If not, we don't have a title.
@@ -299,9 +309,15 @@ builder.defineMetaHandler(async ({ id }) => {
             const malData = await getJikanMeta(cleanQuery);
             if (malData) {
                 meta = { 
-                    id, type: 'series', name: searchTitle.replace(/^\[.*?\]\s*/g, '').trim(), 
+                    id, 
+                    type: 'series', 
+                    name: searchTitle.replace(/^\[.*?\]\s*/g, '').trim(), 
                     poster: malData.poster || generateDynamicPoster(searchTitle),
-                    background: malData.background, description: malData.description, episodes: malData.episodes
+                    background: malData.background, 
+                    description: malData.description, 
+                    releaseInfo: malData.releaseInfo,
+                    released: malData.released,
+                    episodes: malData.episodes
                 };
             } else {
                 meta = { id, type: 'series', name: searchTitle.replace(/^\[.*?\]\s*/g, '').trim(), poster: generateDynamicPoster(searchTitle) };
@@ -359,7 +375,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             // Robust parsing for foreign IDs
             // If the addon is called by AIOMetadata, parts[2] (the Base64 title) is missing.
             // We MUST have the title to search on Sukebei. 
-            // If it's missing from the ID, we fetch it live from AniList
+            // If it's missing from the ID, we fetch it live from AniList!
             if (parts.length > 2 && parts[2]) {
                 searchTitle = sanitizeSearchQuery(Buffer.from(parts[2], 'base64url').toString('utf8'));
             } else {
