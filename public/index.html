@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Yomi Setup | Forbidden Gateway</title>
-    
+
     <link rel="icon" type="image/png" href="/yomi.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Kaisei+Tokumin:wght@400;700;800&family=Space+Mono&display=swap" rel="stylesheet">
-    
+
     <style>
         /* VISUAL ENGINE: 
            Uses a mix of radial gradients and CSS animations to create a 
@@ -24,7 +24,7 @@
             background-size: 100% 100%;
             animation: backgroundShift 15s ease-in-out infinite alternate;
         }
-        
+
         @keyframes backgroundShift {
             0% { background-position: 0% 50%; }
             100% { background-position: 100% 50%; }
@@ -161,9 +161,22 @@
 
         .show-modal { display: flex !important; opacity: 1 !important; }
         .show-modal .modal-card { transform: scale(1) !important; }
+
+        .copy-box::-webkit-scrollbar {
+            height: 4px;
+        }
+        .copy-box::-webkit-scrollbar-thumb {
+            background: rgba(233, 30, 99, 0.5);
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body class="text-gray-300 min-h-screen flex items-center justify-center p-4 overflow-hidden relative border-t-2 border-pink-500/10">
+
+    <div class="absolute top-6 right-6 flex items-center space-x-3 bg-black/50 backdrop-blur-md border border-white/5 rounded-full px-4 py-2 z-50">
+        <div id="statusDot" class="w-2.5 h-2.5 rounded-full bg-gray-500 animate-pulse"></div>
+        <span id="statusText" class="text-[10px] font-mono tracking-widest uppercase text-gray-400">Checking Sukebei...</span>
+    </div>
 
     <div class="bg-logo-container">
         <img src="/yomi_large.png" class="bg-logo" alt="">
@@ -172,8 +185,8 @@
     <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-pink-600/10 rounded-full mix-blend-screen filter blur-[100px] opacity-40 animate-pulse"></div>
     <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full mix-blend-screen filter blur-[100px] opacity-40 animate-pulse" style="animation-delay: 2s;"></div>
 
-    <div class="glass-card p-12 rounded-[2.5rem] max-w-md w-full relative z-10 text-center">
-        
+    <div class="glass-card p-12 rounded-[2.5rem] max-w-md w-full relative z-10 text-center mt-8">
+
         <div class="mb-14">
             <h1 class="text-6xl font-extrabold tracking-tighter mb-2 neon-text">YOMI</h1>
             <p class="slogan-calligraphy mt-2">Your Sukebei Gateway</p>
@@ -181,19 +194,19 @@
         </div>
 
         <div class="space-y-6">
-            <input type="password" id="rdKey" placeholder="Real-Debrid Key" 
+            <input type="password" id="rdKey" placeholder="Real-Debrid Key" oninput="generateManifestUrl()" 
                 class="w-full input-glass rounded-2xl px-6 py-5 text-white placeholder-gray-700 outline-none transition-all duration-300 input-glow font-mono text-sm tracking-widest">
-            
-            <input type="password" id="tbKey" placeholder="Torbox Key" 
+
+            <input type="password" id="tbKey" placeholder="Torbox Key" oninput="generateManifestUrl()" 
                 class="w-full input-glass rounded-2xl px-6 py-5 text-white placeholder-gray-700 outline-none transition-all duration-300 input-glow font-mono text-sm tracking-widest">
 
             <div class="flex flex-col space-y-4 pt-2 pb-2 text-left px-2">
                 <label class="flex items-center space-x-4 cursor-pointer group">
-                    <input type="checkbox" id="showTrending" checked class="glass-checkbox">
+                    <input type="checkbox" id="showTrending" checked class="glass-checkbox" onchange="generateManifestUrl()">
                     <span class="text-[11px] font-mono text-gray-500 uppercase tracking-widest group-hover:text-pink-400 transition-colors">Show Trending Catalog</span>
                 </label>
                 <label class="flex items-center space-x-4 cursor-pointer group">
-                    <input type="checkbox" id="showTop" checked class="glass-checkbox">
+                    <input type="checkbox" id="showTop" checked class="glass-checkbox" onchange="generateManifestUrl()">
                     <span class="text-[11px] font-mono text-gray-500 uppercase tracking-widest group-hover:text-pink-400 transition-colors">Show Top Rated Catalog</span>
                 </label>
             </div>
@@ -205,6 +218,16 @@
                 <button onclick="install('web')" class="w-full text-gray-700 hover:text-white transition-all text-[10px] font-bold tracking-widest uppercase">
                     open in stremio web
                 </button>
+            </div>
+            
+            <div class="pt-4 border-t border-white/5 mt-4">
+                <p class="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-2 text-left px-2">For Nuvio & Other Clients:</p>
+                <div class="relative group">
+                    <input type="text" id="manifestUrlDisplay" readonly value="Enter an API key to generate URL..." class="copy-box w-full input-glass rounded-xl px-4 py-3 text-gray-400 font-mono text-[10px] text-left outline-none opacity-50 cursor-pointer selection:bg-pink-500/30 transition-opacity">
+                    <button onclick="copyManifest()" id="copyBtn" class="absolute right-2 top-1/2 transform -translate-y-1/2 bg-gray-800/80 hover:bg-pink-600 text-white p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100 disabled:opacity-0" disabled title="Copy to clipboard">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -239,6 +262,101 @@
         function closeModal() {
             document.getElementById('modal-overlay').classList.remove('show-modal');
         }
+
+        /**
+         * Live URL Generator for Nuvio/External Clients
+         * Updates the display box instantly via oninput/onchange.
+         */
+        function generateManifestUrl() {
+            const rd = document.getElementById('rdKey').value.trim();
+            const tb = document.getElementById('tbKey').value.trim();
+            const showTrending = document.getElementById('showTrending').checked;
+            const showTop = document.getElementById('showTop').checked;
+            
+            const displayBox = document.getElementById('manifestUrlDisplay');
+            const copyBtn = document.getElementById('copyBtn');
+
+            if (!rd && !tb) {
+                displayBox.value = "Enter an API key to generate URL...";
+                displayBox.style.opacity = '0.5';
+                copyBtn.disabled = true;
+                return null;
+            }
+
+            const config = JSON.stringify({ rdKey: rd, tbKey: tb, showTrending, showTop });
+            const manifestUrl = window.location.origin + "/" + encodeURIComponent(config) + "/manifest.json";
+            
+            displayBox.value = manifestUrl;
+            displayBox.style.opacity = '1';
+            copyBtn.disabled = false;
+            
+            return manifestUrl;
+        }
+
+        /**
+         * Copies the generated URL from the input box directly
+         */
+        function copyManifest() {
+            const copyText = document.getElementById("manifestUrlDisplay");
+            if (copyText && !copyText.value.includes("Enter an API key")) {
+                copyText.select();
+                copyText.setSelectionRange(0, 99999);
+                try {
+                    navigator.clipboard.writeText(copyText.value).then(flashSuccess);
+                } catch (err) {
+                    document.execCommand('copy');
+                    flashSuccess();
+                }
+            }
+        }
+
+        function flashSuccess() {
+            const btn = document.getElementById('copyBtn');
+            const originalIcon = btn.innerHTML;
+            btn.innerHTML = '<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+            setTimeout(() => { btn.innerHTML = originalIcon; }, 2000);
+        }
+
+        /**
+         * Pings our local backend endpoint to verify Sukebei's online status securely.
+         */
+        async function checkSukebeiStatus() {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            
+            try {
+                const response = await fetch('/sukebei-status', { method: 'GET', cache: 'no-store' });
+                const data = await response.json();
+                
+                if (data.status === 'online') {
+                    dot.className = "w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]";
+                    text.textContent = "Sukebei: Online";
+                    text.className = "text-[10px] font-mono tracking-widest uppercase text-green-400";
+                } else {
+                    throw new Error("Offline");
+                }
+            } catch (error) {
+                dot.className = "w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]";
+                text.textContent = "Sukebei: Unreachable";
+                text.className = "text-[10px] font-mono tracking-widest uppercase text-red-400";
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            // Initially select text when the user clicks the input field manually
+            const displayInput = document.getElementById("manifestUrlDisplay");
+            if (displayInput) {
+                displayInput.addEventListener("click", function() {
+                    if (!this.value.includes("Enter an API key")) {
+                        this.select();
+                    }
+                });
+            }
+
+            // Run status check on load and every 5 minutes
+            checkSukebeiStatus();
+            setInterval(checkSukebeiStatus, 300000);
+        });
 
         /**
          * CORE LOGIC: THE INSTALLATION HANDLER
