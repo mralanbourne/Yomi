@@ -1,4 +1,6 @@
-version: '3.8'
+# YOMI DOCKER COMPOSE
+
+version: "3.8"
 
 services:
   yomi-addon:

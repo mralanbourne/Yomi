@@ -10,10 +10,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Kaisei+Tokumin:wght@400;700;800&family=Space+Mono&display=swap" rel="stylesheet">
 
     <style>
-        /* VISUAL ENGINE: 
-           Uses a mix of radial gradients and CSS animations to create a 
-           shifting, atmospheric dark background.
-        */
         body {
             font-family: 'Kaisei Tokumin', serif;
             background-color: #050505;
@@ -30,9 +26,6 @@
             100% { background-position: 100% 50%; }
         }
 
-        /* GLASSMORPHISM UI: 
-           High blur values and low opacity borders create the "frosted glass" effect.
-        */
         .glass-card {
             background: rgba(10, 10, 15, 0.1); 
             backdrop-filter: blur(25px);
@@ -47,7 +40,6 @@
             50% { transform: translateY(-12px); }
         }
 
-        /* Neon Glow Effects for Typography */
         .neon-text {
             color: #fff;
             text-shadow: 0 0 5px #fff, 0 0 10px #e91e63, 0 0 20px #e91e63, 0 0 40px #9c27b0;
@@ -61,7 +53,6 @@
             text-transform: uppercase;
         }
 
-        /* Large Background Logo (Watermark) */
         .bg-logo-container {
             position: fixed;
             inset: 0;
@@ -80,7 +71,6 @@
             transform: rotate(-5deg);
         }
 
-        /* Input Styling: Transparent with focused glow */
         .input-glass {
             background: rgba(0, 0, 0, 0.5);
             border: 1px solid rgba(255, 255, 255, 0.03);
@@ -93,7 +83,6 @@
             background-color: rgba(0, 0, 0, 0.7);
         }
 
-        /* Custom UI Checkbox matching the Glass Design */
         .glass-checkbox {
             appearance: none;
             width: 1.25rem;
@@ -136,7 +125,6 @@
             transform: scale(1.02);
         }
 
-        /* Modal / Overlay logic for errors */
         #modal-overlay {
             display: none;
             position: fixed;
@@ -194,19 +182,19 @@
         </div>
 
         <div class="space-y-6">
-            <input type="password" id="rdKey" placeholder="Real-Debrid Key" oninput="generateManifestUrl()" 
+            <input type="password" id="rdKey" placeholder="Real-Debrid Key" 
                 class="w-full input-glass rounded-2xl px-6 py-5 text-white placeholder-gray-700 outline-none transition-all duration-300 input-glow font-mono text-sm tracking-widest">
 
-            <input type="password" id="tbKey" placeholder="Torbox Key" oninput="generateManifestUrl()" 
+            <input type="password" id="tbKey" placeholder="Torbox Key" 
                 class="w-full input-glass rounded-2xl px-6 py-5 text-white placeholder-gray-700 outline-none transition-all duration-300 input-glow font-mono text-sm tracking-widest">
 
             <div class="flex flex-col space-y-4 pt-2 pb-2 text-left px-2">
                 <label class="flex items-center space-x-4 cursor-pointer group">
-                    <input type="checkbox" id="showTrending" checked class="glass-checkbox" onchange="generateManifestUrl()">
+                    <input type="checkbox" id="showTrending" checked class="glass-checkbox">
                     <span class="text-[11px] font-mono text-gray-500 uppercase tracking-widest group-hover:text-pink-400 transition-colors">Show Trending Catalog</span>
                 </label>
                 <label class="flex items-center space-x-4 cursor-pointer group">
-                    <input type="checkbox" id="showTop" checked class="glass-checkbox" onchange="generateManifestUrl()">
+                    <input type="checkbox" id="showTop" checked class="glass-checkbox">
                     <span class="text-[11px] font-mono text-gray-500 uppercase tracking-widest group-hover:text-pink-400 transition-colors">Show Top Rated Catalog</span>
                 </label>
             </div>
@@ -221,7 +209,7 @@
             </div>
             
             <div class="pt-4 border-t border-white/5 mt-4">
-                <p class="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-2 text-left px-2">For Nuvio & Other Clients:</p>
+                <p class="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-2 text-left px-2">Manifest URL:</p>
                 <div class="relative group">
                     <input type="text" id="manifestUrlDisplay" readonly value="Enter an API key to generate URL..." class="copy-box w-full input-glass rounded-xl px-4 py-3 text-gray-400 font-mono text-[10px] text-left outline-none opacity-50 cursor-pointer selection:bg-pink-500/30 transition-opacity">
                     <button onclick="copyManifest()" id="copyBtn" class="absolute right-2 top-1/2 transform -translate-y-1/2 bg-gray-800/80 hover:bg-pink-600 text-white p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100 disabled:opacity-0" disabled title="Copy to clipboard">
@@ -231,7 +219,7 @@
             </div>
         </div>
 
-        <div class="mt-12 pt-8 border-t border-gray-900 flex justify-center space-x-12 opacity-40 hover:opacity-100 transition-opacity duration-700">
+        <div class="mt-8 pt-8 border-t border-gray-900 flex justify-center space-x-12 opacity-40 hover:opacity-100 transition-opacity duration-700">
             <a href="https://github.com/mralanbourne/Yomi" target="_blank" class="text-gray-600 hover:text-white transition-all transform hover:scale-110">
                 <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
             </a>
@@ -252,9 +240,6 @@
     </div>
 
     <script>
-        /**
-         * UI CONTROLS: Simple Modal logic
-         */
         function showModal() {
             document.getElementById('modal-overlay').classList.add('show-modal');
         }
@@ -263,10 +248,6 @@
             document.getElementById('modal-overlay').classList.remove('show-modal');
         }
 
-        /**
-         * Live URL Generator for Nuvio/External Clients
-         * Updates the display box instantly via oninput/onchange.
-         */
         function generateManifestUrl() {
             const rd = document.getElementById('rdKey').value.trim();
             const tb = document.getElementById('tbKey').value.trim();
@@ -284,7 +265,7 @@
             }
 
             const config = JSON.stringify({ rdKey: rd, tbKey: tb, showTrending, showTop });
-            const manifestUrl = window.location.origin + "/" + encodeURIComponent(config) + "/manifest.json";
+            const manifestUrl = window.location.protocol + "//" + window.location.host + "/" + encodeURIComponent(config) + "/manifest.json";
             
             displayBox.value = manifestUrl;
             displayBox.style.opacity = '1';
@@ -293,9 +274,6 @@
             return manifestUrl;
         }
 
-        /**
-         * Copies the generated URL from the input box directly
-         */
         function copyManifest() {
             const copyText = document.getElementById("manifestUrlDisplay");
             if (copyText && !copyText.value.includes("Enter an API key")) {
@@ -317,9 +295,6 @@
             setTimeout(() => { btn.innerHTML = originalIcon; }, 2000);
         }
 
-        /**
-         * Pings our local backend endpoint to verify Sukebei's online status securely.
-         */
         async function checkSukebeiStatus() {
             const dot = document.getElementById('statusDot');
             const text = document.getElementById('statusText');
@@ -343,33 +318,31 @@
         }
 
         document.addEventListener("DOMContentLoaded", () => {
-            // Initially select text when the user clicks the input field manually
-            const displayInput = document.getElementById("manifestUrlDisplay");
-            if (displayInput) {
-                displayInput.addEventListener("click", function() {
-                    if (!this.value.includes("Enter an API key")) {
-                        this.select();
-                    }
-                });
-            }
+            document.getElementById('rdKey').addEventListener('input', generateManifestUrl);
+            document.getElementById('tbKey').addEventListener('input', generateManifestUrl);
+            document.getElementById('showTrending').addEventListener('change', generateManifestUrl);
+            document.getElementById('showTop').addEventListener('change', generateManifestUrl);
+            
+            document.getElementById("manifestUrlDisplay").addEventListener("click", function() {
+                if (!this.value.includes("Enter an API key")) {
+                    this.select();
+                }
+            });
 
-            // Run status check on load and every 5 minutes
             checkSukebeiStatus();
             setInterval(checkSukebeiStatus, 300000);
+            
+            document.querySelectorAll('input[type="password"]').forEach(input => {
+                input.addEventListener('input', () => {
+                    input.style.borderColor = '';
+                });
+            });
         });
 
-        /**
-         * CORE LOGIC: THE INSTALLATION HANDLER
-         * This function builds the specialized Stremio Addon URL.
-         * Stremio stores its configuration by encoding data into the Manifest URL itself.
-         * * @param {string} type - 'app' for local stremio, 'web' for the browser version
-         */
         function install(type) {
-            const rd = document.getElementById('rdKey').value.trim();
-            const tb = document.getElementById('tbKey').value.trim();
-            
-            // Validation: Ensure the user provided at least one cloud provider key
-            if (!rd && !tb) {
+            const manifestUrl = generateManifestUrl();
+
+            if (!manifestUrl) {
                 const card = document.querySelector('.glass-card');
                 card.style.borderColor = '#e91e63';
                 setTimeout(() => card.style.borderColor = '', 1000);
@@ -377,34 +350,12 @@
                 return;
             }
 
-            // Capture the visibility settings for catalogs
-            const showTrending = document.getElementById('showTrending').checked;
-            const showTop = document.getElementById('showTop').checked;
-
-            // 1. Create a config object
-            // 2. Stringify it to JSON
-            // 3. URI Encode it so it safely travels in the URL path
-            const config = JSON.stringify({ rdKey: rd, tbKey: tb, showTrending, showTop });
-            
-            // Generate the final manifest URL: https://HOST.com/CONFIG_JSON/manifest.json
-            const manifestUrl = window.location.origin + "/" + encodeURIComponent(config) + "/manifest.json";
-            
             if (type === 'app') {
-                // To install in the local app, we replace 'https://' with 'stremio://'
-                // This triggers the deep link registered by the Stremio desktop client.
                 window.location.href = manifestUrl.replace(/^https?:\/\//i, "stremio://");
             } else {
-                // To install in the Web version, we append our manifest to the official web.stremio.com link
                 window.open("https://web.stremio.com/#/addons?addon=" + encodeURIComponent(manifestUrl));
             }
         }
-
-        // UX: Reset input border color when user starts typing again
-        document.querySelectorAll('input[type="password"]').forEach(input => {
-            input.addEventListener('input', () => {
-                input.style.borderColor = '';
-            });
-        });
     </script>
 </body>
 </html>
