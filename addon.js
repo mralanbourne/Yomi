@@ -2,6 +2,7 @@
 // YOMI STREMIO ADDON - CORE LOGIC
 // The main entry point for the Stremio logic.
 // Strictly conforms to the latest Stremio SDK stream specifications.
+// Includes isolated ID prefixes (yomi-al / yomi-suk) to prevent metadata collisions.
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -26,7 +27,9 @@ const manifest = {
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox. Smart-parsing tames chaotic torrent names for a clean catalog. Pure quality, zero buffering. Info: github.com/mralanbourne/Yomi",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
-    idPrefixes: ["anilist:", "sukebei:"],
+   
+    // Isolated prefixes prevent external addons (like AIOmetadata) from hijacking and crashing 18+ requests
+    idPrefixes: ["yomi-al:", "yomi-suk:"],
     catalogs: [
         { id: "sukebei_trending", type: "series", name: "Yomi Trending" },
         { id: "sukebei_top", type: "series", name: "Yomi Top Rated" },
@@ -143,7 +146,7 @@ builder.defineCatalogHandler(async ({ id, extra, config }) => {
         Object.keys(rawGroups).forEach(cleanName => {
             if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
                 finalMetas.push({ 
-                    id: "sukebei:" + Buffer.from(cleanName).toString("base64url"), 
+                    id: "yomi-suk:" + Buffer.from(cleanName).toString("base64url"), 
                     type: "series", 
                     name: cleanName.replace(/^\[.*?\]\s*/g, "").trim(), 
                     poster: generateDynamicPoster(cleanName) 
@@ -156,7 +159,7 @@ builder.defineCatalogHandler(async ({ id, extra, config }) => {
 });
 
 builder.defineMetaHandler(async ({ id }) => {
-    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) {
+    if (!id.startsWith("yomi-al:") && !id.startsWith("yomi-suk:")) {
         return Promise.resolve({ meta: null });
     }
 
@@ -166,7 +169,7 @@ builder.defineMetaHandler(async ({ id }) => {
     let searchTitle = "";
 
     try {
-        if (id.startsWith("anilist:")) {
+        if (id.startsWith("yomi-al:")) {
             const parts = id.split(":");
             let aniListId = parts[1];
             
@@ -196,8 +199,9 @@ builder.defineMetaHandler(async ({ id }) => {
                 
                 meta = { id, type: "series", name: searchTitle, poster: generateDynamicPoster(searchTitle) };
             }
-        } else if (id.startsWith("sukebei:")) {
-            const base64Str = id.split(":")[1];
+        } else if (id.startsWith("yomi-suk:")) {
+            const parts = id.split(":");
+            const base64Str = parts[1];
             searchTitle = base64Str ? Buffer.from(base64Str, "base64url").toString("utf8") : "Unknown";
             let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim();
             const malData = await getJikanMeta(cleanQuery);
@@ -254,7 +258,7 @@ builder.defineMetaHandler(async ({ id }) => {
 });
 
 builder.defineStreamHandler(async ({ id, config }) => {
-    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) return Promise.resolve({ streams: [] });
+    if (!id.startsWith("yomi-al:") && !id.startsWith("yomi-suk:")) return Promise.resolve({ streams: [] });
     
     console.log("[Stream Request] Processing request for ID: " + id);
 
@@ -263,7 +267,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
         let searchTitle = "", requestedEp = 1;
         let aniListIdForFallback = null;
         
-        if (id.startsWith("anilist:")) {
+        if (id.startsWith("yomi-al:")) {
             const parts = id.split(":");
             aniListIdForFallback = isNaN(parts[1]) ? parts.find(p => !isNaN(p) && p.length > 0) : parts[1];
             
@@ -279,7 +283,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             const lastPart = parts[parts.length - 1];
             if (!isNaN(lastPart) && parts.length > 2) requestedEp = parseInt(lastPart, 10);
 
-        } else if (id.startsWith("sukebei:")) {
+        } else if (id.startsWith("yomi-suk:")) {
             const parts = id.split(":");
             searchTitle = parts[1] ? sanitizeSearchQuery(Buffer.from(parts[1], "base64url").toString("utf8")) : "";
             if (parts.length >= 4) requestedEp = parseInt(parts[3], 10);
@@ -301,7 +305,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
 
             if (aniListIdForFallback) {
                 fallbackMeta = await getAnimeMeta(aniListIdForFallback);
-            } else if (id.startsWith("sukebei:")) {
+            } else if (id.startsWith("yomi-suk:")) {
                 let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim();
                 fallbackMeta = await getJikanMeta(cleanQuery);
             }
@@ -319,7 +323,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
                     });
                 }
 
-                
+               
                 // ADVANCED FALLBACK: Truncate long Light Novel titles to bypass Sukebei strict limits
                 const primaryWords = searchTitle.split(/\s+/);
                 if (primaryWords.length > 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
@@ -361,7 +365,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             const hashLow = t.hash.toLowerCase();
             const files = rdC[hashLow] || tbC[hashLow];
             
-            
+           
             // SEMANTIC UX: Clearly identify if the torrent is a batch release or a single episode
             const isBatch = getBatchRange(t.title) !== null;
             const batchIndicator = isBatch ? "📦 BATCH" : "🎬 EPISODE";
@@ -388,8 +392,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 return fileList
                     .filter(f => {
                         const name = f.name || f.path || "";
-                        
-                        // CRITICAL: .idx and .sub (VobSub) are strictly filtered out here as they crash the Stremio web player
+
+                        // .idx and .sub (VobSub) are strictly filtered out here as they crash the Stremio web player
                         if (!/\.(ass|srt|ssa|vtt)$/i.test(name)) return false;
                         const extEp = extractEpisodeNumber(name);
                         if (extEp !== null) {
@@ -418,7 +422,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
                         const extMatch = n.match(/\.(ass|srt|ssa|vtt)$/);
                         const ext = extMatch ? extMatch[1].toUpperCase() : "SUB";
 
-                        
+
                         // Append original filename to query to allow correct MIME type parsing for Torbox
                         return { 
                             id: f.id, 
@@ -428,7 +432,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
                     });
             };
 
-            
+           
             // Using "description" instead of "title" to ensure complete compliance with the latest Stremio SDK
             if (userConfig.rdKey) {
                 const fRD = rdC[hashLow];
@@ -445,7 +449,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             }
         });
         
-        
+       
         // Safely sort streams: priority to cached links, then strict fallback to file size descending
         return { 
             streams: streams.sort((a, b) => {
