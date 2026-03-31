@@ -5,7 +5,7 @@
 <h1 align="center">YOMI: Your Forbidden Gateway</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.2.3-e91e63.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/version-5.2.5-e91e63.svg?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Stremio-Addon-8a5a9e?style=for-the-badge&logo=stremio" alt="Stremio Addon">
   <img src="https://img.shields.io/badge/Status-Online-success?style=for-the-badge" alt="Status Online">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License MIT">
