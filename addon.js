@@ -1,8 +1,8 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
 // The main entry point for the Stremio logic.
-// Strictly conforms to the latest Stremio SDK stream specifications.
-// Includes isolated ID prefixes (yomi-al / yomi-suk) to prevent metadata collisions.
+// Strictly uses standard prefixes (anilist: / sukebei:) to ensure native Stremio compatibility.
+// Integrates safe Base64 polyfills to prevent Node.js version crashes.
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -16,20 +16,32 @@ const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
 
+
+// Polyfill for base64url encoding to ensure compatibility across all Node.js versions
+function toBase64Safe(str) {
+    return Buffer.from(str, "utf8").toString("base64").replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+
+// Polyfill for base64url decoding
+function fromBase64Safe(str) {
+    return Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/'), "base64").toString("utf8");
+}
+
 //===============
 // ADDON MANIFEST
 //===============
 const manifest = {
     id: "org.community.yomi",
-    version: "5.2.5",
+    version: "5.2.8",
     name: "Yomi",
     logo: "https://github.com/mralanbourne/Yomi/blob/main/static/yomi.png?raw=true", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox. Smart-parsing tames chaotic torrent names for a clean catalog. Pure quality, zero buffering. Info: github.com/mralanbourne/Yomi",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
-   
-    // Isolated prefixes prevent external addons (like AIOmetadata) from hijacking and crashing 18+ requests
-    idPrefixes: ["yomi-al:", "yomi-suk:"],
+    
+    // Restored standard native prefixes
+    idPrefixes: ["anilist:", "sukebei:"],
     catalogs: [
         { id: "sukebei_trending", type: "series", name: "Yomi Trending" },
         { id: "sukebei_top", type: "series", name: "Yomi Top Rated" },
@@ -146,7 +158,7 @@ builder.defineCatalogHandler(async ({ id, extra, config }) => {
         Object.keys(rawGroups).forEach(cleanName => {
             if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
                 finalMetas.push({ 
-                    id: "yomi-suk:" + Buffer.from(cleanName).toString("base64url"), 
+                    id: "sukebei:" + toBase64Safe(cleanName), 
                     type: "series", 
                     name: cleanName.replace(/^\[.*?\]\s*/g, "").trim(), 
                     poster: generateDynamicPoster(cleanName) 
@@ -159,7 +171,7 @@ builder.defineCatalogHandler(async ({ id, extra, config }) => {
 });
 
 builder.defineMetaHandler(async ({ id }) => {
-    if (!id.startsWith("yomi-al:") && !id.startsWith("yomi-suk:")) {
+    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) {
         return Promise.resolve({ meta: null });
     }
 
@@ -169,7 +181,7 @@ builder.defineMetaHandler(async ({ id }) => {
     let searchTitle = "";
 
     try {
-        if (id.startsWith("yomi-al:")) {
+        if (id.startsWith("anilist:")) {
             const parts = id.split(":");
             let aniListId = parts[1];
             
@@ -194,17 +206,18 @@ builder.defineMetaHandler(async ({ id }) => {
                 };
             } else {
                 searchTitle = (parts.length > 2 && parts[2]) 
-                    ? Buffer.from(parts[2], "base64url").toString("utf8") 
+                    ? fromBase64Safe(parts[2]) 
                     : "Unknown Anime";
                 
-                meta = { id, type: "series", name: searchTitle, poster: generateDynamicPoster(searchTitle) };
+                meta = { id: id, type: "series", name: searchTitle, poster: generateDynamicPoster(searchTitle) };
             }
-        } else if (id.startsWith("yomi-suk:")) {
+        } else if (id.startsWith("sukebei:")) {
             const parts = id.split(":");
             const base64Str = parts[1];
-            searchTitle = base64Str ? Buffer.from(base64Str, "base64url").toString("utf8") : "Unknown";
+            searchTitle = base64Str ? fromBase64Safe(base64Str) : "Unknown";
             let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim();
             const malData = await getJikanMeta(cleanQuery);
+            
             if (malData) {
                 meta = { 
                     id, 
@@ -243,8 +256,9 @@ builder.defineMetaHandler(async ({ id }) => {
 
         const videos = [];
         const episodeThumbnail = meta.background || meta.poster || "https://dummyimage.com/600x337/1a1a1a/e91e63.png?text=YOMI+EPISODE";
+        
         for (let i = 1; i <= epCount; i++) {
-            videos.push({ id: id + ":1:" + i, title: "Episode " + i, season: 1, episode: i, released: new Date().toISOString(), thumbnail: episodeThumbnail });
+            videos.push({ id: meta.id + ":1:" + i, title: "Episode " + i, season: 1, episode: i, released: new Date().toISOString(), thumbnail: episodeThumbnail });
         }
         meta.videos = videos;
         return { meta, cacheMaxAge: 604800 };
@@ -258,7 +272,7 @@ builder.defineMetaHandler(async ({ id }) => {
 });
 
 builder.defineStreamHandler(async ({ id, config }) => {
-    if (!id.startsWith("yomi-al:") && !id.startsWith("yomi-suk:")) return Promise.resolve({ streams: [] });
+    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) return Promise.resolve({ streams: [] });
     
     console.log("[Stream Request] Processing request for ID: " + id);
 
@@ -267,12 +281,12 @@ builder.defineStreamHandler(async ({ id, config }) => {
         let searchTitle = "", requestedEp = 1;
         let aniListIdForFallback = null;
         
-        if (id.startsWith("yomi-al:")) {
+        if (id.startsWith("anilist:")) {
             const parts = id.split(":");
             aniListIdForFallback = isNaN(parts[1]) ? parts.find(p => !isNaN(p) && p.length > 0) : parts[1];
             
             if (parts.length > 2 && parts[2]) {
-                searchTitle = sanitizeSearchQuery(Buffer.from(parts[2], "base64url").toString("utf8"));
+                searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[2]));
             } else {
                 if (aniListIdForFallback) {
                     const freshMeta = await getAnimeMeta(aniListIdForFallback);
@@ -283,9 +297,9 @@ builder.defineStreamHandler(async ({ id, config }) => {
             const lastPart = parts[parts.length - 1];
             if (!isNaN(lastPart) && parts.length > 2) requestedEp = parseInt(lastPart, 10);
 
-        } else if (id.startsWith("yomi-suk:")) {
+        } else if (id.startsWith("sukebei:")) {
             const parts = id.split(":");
-            searchTitle = parts[1] ? sanitizeSearchQuery(Buffer.from(parts[1], "base64url").toString("utf8")) : "";
+            searchTitle = parts[1] ? sanitizeSearchQuery(fromBase64Safe(parts[1])) : "";
             if (parts.length >= 4) requestedEp = parseInt(parts[3], 10);
         }
 
@@ -305,7 +319,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
 
             if (aniListIdForFallback) {
                 fallbackMeta = await getAnimeMeta(aniListIdForFallback);
-            } else if (id.startsWith("yomi-suk:")) {
+            } else if (id.startsWith("sukebei:")) {
                 let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim();
                 fallbackMeta = await getJikanMeta(cleanQuery);
             }
@@ -323,7 +337,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
                     });
                 }
 
-               
+                
                 // ADVANCED FALLBACK: Truncate long Light Novel titles to bypass Sukebei strict limits
                 const primaryWords = searchTitle.split(/\s+/);
                 if (primaryWords.length > 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
@@ -365,7 +379,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             const hashLow = t.hash.toLowerCase();
             const files = rdC[hashLow] || tbC[hashLow];
             
-           
+            
             // SEMANTIC UX: Clearly identify if the torrent is a batch release or a single episode
             const isBatch = getBatchRange(t.title) !== null;
             const batchIndicator = isBatch ? "📦 BATCH" : "🎬 EPISODE";
@@ -392,8 +406,8 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 return fileList
                     .filter(f => {
                         const name = f.name || f.path || "";
-
-                        // .idx and .sub (VobSub) are strictly filtered out here as they crash the Stremio web player
+                        
+        				// .idx and .sub (VobSub) are strictly filtered out here as they crash the Stremio web player
                         if (!/\.(ass|srt|ssa|vtt)$/i.test(name)) return false;
                         const extEp = extractEpisodeNumber(name);
                         if (extEp !== null) {
@@ -422,7 +436,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
                         const extMatch = n.match(/\.(ass|srt|ssa|vtt)$/);
                         const ext = extMatch ? extMatch[1].toUpperCase() : "SUB";
 
-
+                        
                         // Append original filename to query to allow correct MIME type parsing for Torbox
                         return { 
                             id: f.id, 
@@ -432,7 +446,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
                     });
             };
 
-           
+            
             // Using "description" instead of "title" to ensure complete compliance with the latest Stremio SDK
             if (userConfig.rdKey) {
                 const fRD = rdC[hashLow];
@@ -449,7 +463,7 @@ builder.defineStreamHandler(async ({ id, config }) => {
             }
         });
         
-       
+        
         // Safely sort streams: priority to cached links, then strict fallback to file size descending
         return { 
             streams: streams.sort((a, b) => {
