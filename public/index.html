@@ -6,6 +6,9 @@
     <title>Yomi Setup | Forbidden Gateway</title>
 
     <link rel="icon" type="image/png" href="/yomi.png">
+    <link rel="shortcut icon" href="/yomi.png">
+    <link rel="apple-touch-icon" href="/yomi.png">
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Kaisei+Tokumin:wght@400;700;800&family=Space+Mono&display=swap" rel="stylesheet">
 
@@ -69,6 +72,9 @@
             opacity: 0.03;
             filter: blur(2px) saturate(0);
             transform: rotate(-5deg);
+            -webkit-mask-image: radial-gradient(circle, black 30%, transparent 70%);
+            mask-image: radial-gradient(circle, black 30%, transparent 70%);
+            mix-blend-mode: screen;
         }
 
         .input-glass {
@@ -188,6 +194,29 @@
             <input type="password" id="tbKey" placeholder="Torbox Key" 
                 class="w-full input-glass rounded-2xl px-6 py-5 text-white placeholder-gray-700 outline-none transition-all duration-300 input-glow font-mono text-sm tracking-widest">
 
+            <div class="pt-4 pb-2 border-t border-white/5 mt-2">
+                <p class="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-3 text-left px-2">Preferred Languages</p>
+                <div class="flex flex-wrap gap-2 px-2" id="language-grid">
+                    <label class="cursor-pointer"><input type="checkbox" value="ENG" class="peer hidden lang-cb" checked><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇬🇧 ENG</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="GER" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇩🇪 GER</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="FRE" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇫🇷 FRE</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="ITA" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇮🇹 ITA</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="SPA" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇪🇸 SPA</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="RUS" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇷🇺 RUS</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="POR" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇵🇹 POR</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="ARA" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇸🇦 ARA</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="CHI" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇨🇳 CHI</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="KOR" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇰🇷 KOR</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="HIN" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇮🇳 HIN</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="POL" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇵🇱 POL</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="NLD" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇳🇱 NLD</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="TUR" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇹🇷 TUR</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="VIE" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇻🇳 VIE</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="IND" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇮🇩 IND</div></label>
+                    <label class="cursor-pointer"><input type="checkbox" value="JPN" class="peer hidden lang-cb"><div class="text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-md px-2.5 py-1.5 peer-checked:bg-pink-500/20 peer-checked:text-pink-400 peer-checked:border-pink-500/50 transition-all hover:bg-white/5">🇯🇵 JPN</div></label>
+                </div>
+            </div>
+
             <div class="flex flex-col space-y-4 pt-2 pb-2 text-left px-2">
                 <label class="flex items-center space-x-4 cursor-pointer group">
                     <input type="checkbox" id="showTrending" checked class="glass-checkbox">
@@ -251,6 +280,11 @@
         function generateManifestUrl() {
             const rd = document.getElementById('rdKey').value.trim();
             const tb = document.getElementById('tbKey').value.trim();
+
+            // Dynamically extracts user-selected language filters from the UI checkboxes
+            const langCheckboxes = document.querySelectorAll('.lang-cb:checked');
+            const languages = Array.from(langCheckboxes).map(cb => cb.value);
+            
             const showTrending = document.getElementById('showTrending').checked;
             const showTop = document.getElementById('showTop').checked;
             
@@ -264,8 +298,29 @@
                 return null;
             }
 
-            const config = JSON.stringify({ rdKey: rd, tbKey: tb, showTrending, showTop });
-            const manifestUrl = window.location.protocol + "//" + window.location.host + "/" + encodeURIComponent(config) + "/manifest.json";
+            // Appends the language array to the raw configuration object
+            const rawConfig = { showTrending, showTop };
+            if (rd) rawConfig.rdKey = rd;
+            if (tb) rawConfig.tbKey = tb;
+            if (languages.length > 0) rawConfig.language = languages;
+
+            // Transpiles the config into a secure Base64 format to bypass Node URL limitations
+            const base64Payload = btoa(JSON.stringify(rawConfig))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=/g, '');
+
+            // Nests the base64 string under the exact 'Yomi' key expected by the backend parser
+            const finalConfig = { Yomi: base64Payload };
+            const configStr = encodeURIComponent(JSON.stringify(finalConfig));
+            
+            let host = window.location.host;
+            if (host.includes("localhost")) {
+                host = host.replace("localhost", "127.0.0.1");
+            }
+
+            const protocol = window.location.protocol === "https:" ? "https://" : "http://";
+            const manifestUrl = `${protocol}${host}/${configStr}/manifest.json`;
             
             displayBox.value = manifestUrl;
             displayBox.style.opacity = '1';
@@ -322,6 +377,11 @@
             document.getElementById('tbKey').addEventListener('input', generateManifestUrl);
             document.getElementById('showTrending').addEventListener('change', generateManifestUrl);
             document.getElementById('showTop').addEventListener('change', generateManifestUrl);
+
+            // Event listeners attached to checkboxes to instantly regenerate manifest on language selection
+            document.querySelectorAll('.lang-cb').forEach(cb => {
+                cb.addEventListener('change', generateManifestUrl);
+            });
             
             document.getElementById("manifestUrlDisplay").addEventListener("click", function() {
                 if (!this.value.includes("Enter an API key")) {
