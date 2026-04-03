@@ -219,6 +219,8 @@ function serveArchiveVideo(req, res) {
 //===============
 app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
     const { provider, apiKey, hash, episode } = req.params;
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "*");
     const requestedEp = episode || "1";
     const magnet = "magnet:?xt=urn:btih:" + hash;
     
