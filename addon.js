@@ -3,6 +3,7 @@
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
+const axios = require("axios");
 
 const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime, getJikanMeta, fetchEpisodeDetails } = require("./lib/anilist");
 const { searchSukebeiForHentai, cleanTorrentTitle } = require("./lib/sukebei");
@@ -22,13 +23,13 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "6.8.2", 
+    version: "6.8.4", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
     resources: ["catalog", "meta", "stream"],
-    types: ["movie", "series"],
-    idPrefixes: ["anilist:", "sukebei:"],
+    types: ["movie", "series", "anime"],
+    idPrefixes: ["anilist:", "sukebei:", "kitsu:", "tt"],
     catalogs: [
         { id: "sukebei_trending", type: "series", name: "Yomi Trending" },
         { id: "sukebei_top", type: "series", name: "Yomi Top Rated" },
@@ -98,7 +99,7 @@ const LANG_REGEX = {
     "TUR": /\b(tur|turkish|tr-tr)\b|(?:^|\[|\()(tr)(?:\]|\)|$)/i,
     "VIE": /\b(vie|vietnamese|vi-vn)\b|(?:^|\[|\()(vi)(?:\]|\)|$)/i,
     "IND": /\b(ind|indonesian|id-id)\b|(?:^|\[|\()(id)(?:\]|\)|$)/i,
-    "ENG": /\b(eng|english|subbed|en-us|en-gb)\b|(?:^|\[|\()(en)(?:\]|\)|$)/i,
+    "ENG": /\b(eng|english|dubbed|subbed|en-us|en-gb)\b|(?:^|\[|\()(en)(?:\]|\)|$)/i,
     "JPN": /\b(jpn|japanese|raw|jp-jp)\b|(?:^|\[|\()(jp)(?:\]|\)|$)/i,
     "MULTI": /(multi|dual|multi-audio|multi-sub)/i
 };
@@ -139,16 +140,18 @@ function generateDynamicPoster(title) {
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
 }
 
-builder.defineCatalogHandler(async ({ id, extra, config }) => {
+builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     console.log("[Catalog Request] Fetching catalog: " + id);
     const userConfig = parseConfig(config);
     if (id === "sukebei_trending") {
         if (userConfig.showTrending === false) return { metas: [] };
-        return { metas: await getTrendingAdultAnime(), cacheMaxAge: 43200 };
+        const metas = await getTrendingAdultAnime();
+        return { metas: metas.map(m => ({ ...m, type: type === "anime" ? "anime" : "series" })), cacheMaxAge: 43200 };
     }
     if (id === "sukebei_top") {
         if (userConfig.showTop === false) return { metas: [] };
-        return { metas: await getTopAdultAnime(), cacheMaxAge: 43200 };
+        const metas = await getTopAdultAnime();
+        return { metas: metas.map(m => ({ ...m, type: type === "anime" ? "anime" : "series" })), cacheMaxAge: 43200 };
     }
     if (id === "sukebei_search" && extra.search) {
         const [anilistMetas, sukebeiTorrents] = await Promise.all([
@@ -160,7 +163,12 @@ builder.defineCatalogHandler(async ({ id, extra, config }) => {
             const dateB = b.released ? new Date(b.released).getTime() : Infinity;
             return dateA - dateB;
         });
-        const finalMetas = [...anilistMetas];
+        
+        const finalMetas = anilistMetas.map(m => {
+            m.type = type === "anime" ? "anime" : "series";
+            return m;
+        });
+        
         const rawGroups = {};
         sukebeiTorrents.forEach(t => {
             const cleanName = cleanTorrentTitle(t.title);
@@ -169,7 +177,7 @@ builder.defineCatalogHandler(async ({ id, extra, config }) => {
         Object.keys(rawGroups).forEach(cleanName => {
             if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
                 finalMetas.push({ 
-                    id: "sukebei:" + toBase64Safe(cleanName), type: "series", 
+                    id: "sukebei:" + toBase64Safe(cleanName), type: type === "anime" ? "anime" : "series", 
                     name: cleanName.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(cleanName) 
                 });
             }
@@ -179,7 +187,7 @@ builder.defineCatalogHandler(async ({ id, extra, config }) => {
     return { metas: [] };
 });
 
-builder.defineMetaHandler(async ({ id }) => {
+builder.defineMetaHandler(async ({ type, id }) => {
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) return Promise.resolve({ meta: null });
     console.log("[Meta Request] Fetching details for ID: " + id);
     let meta = null, searchTitle = "";
@@ -215,10 +223,9 @@ builder.defineMetaHandler(async ({ id }) => {
             }
         }
         
-        meta.type = "series";
+        meta.type = type === "anime" ? "anime" : "series";
         let epCount = meta.episodes || 1;
         if (epCount === 1 || !meta.episodes) {
-            console.log("[Meta] Scraping Sukebei to detect actual episode count for OVA/Unknown: " + searchTitle);
             try {
                 const torrents = await searchSukebeiForHentai(searchTitle);
                 let maxDetected = 1;
@@ -258,12 +265,12 @@ builder.defineMetaHandler(async ({ id }) => {
         return { meta, cacheMaxAge: 604800 };
     } catch (err) {
         console.error("[Meta Error] Crashed during meta generation: " + err.message);
-        return { meta: { id, type: "series", name: "Unknown (Error)", poster: generateDynamicPoster("Error") }, cacheMaxAge: 60 };
+        return { meta: { id, type: type === "anime" ? "anime" : "series", name: "Unknown (Error)", poster: generateDynamicPoster("Error") }, cacheMaxAge: 60 };
     }
 });
 
-builder.defineStreamHandler(async ({ id, config }) => {
-    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) return Promise.resolve({ streams: [] });
+builder.defineStreamHandler(async ({ type, id, config }) => {
+    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:") && !id.startsWith("kitsu:") && !id.startsWith("tt")) return Promise.resolve({ streams: [] });
     console.log("[Stream Request] Processing request for ID: " + id);
 
     try {
@@ -286,6 +293,31 @@ builder.defineStreamHandler(async ({ id, config }) => {
         } else if (id.startsWith("sukebei:")) {
             searchTitle = parts[1] ? sanitizeSearchQuery(fromBase64Safe(parts[1])) : "";
             requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
+        } else if (id.startsWith("kitsu:")) {
+            try {
+                const kitsuId = parts[0] + ":" + parts[1];
+                const res = await axios.get(`https://anime-kitsu.strem.fun/meta/anime/${kitsuId}.json`, { timeout: 4000 });
+                searchTitle = sanitizeSearchQuery(res.data?.meta?.name || "");
+            } catch (e) {
+                console.error("[Stream] Kitsu Fetch Error:", e.message);
+            }
+            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
+        } else if (id.startsWith("tt")) {
+            //===============
+            // CINEMETA FALLBACK FOR IOS FUSION
+            //===============
+            try {
+                const imdbId = parts[0];
+                const res = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${imdbId}.json`, { timeout: 4000 });
+                searchTitle = sanitizeSearchQuery(res.data?.meta?.name || "");
+            } catch (e) {
+                console.error("[Stream] Cinemeta Fetch Error:", e.message);
+            }
+            if (parts.length > 2) {
+                requestedEp = parseInt(parts[2], 10) || 1;
+            } else {
+                requestedEp = 1;
+            }
         }
 
         if (!searchTitle) return { streams: [] };
@@ -324,10 +356,10 @@ builder.defineStreamHandler(async ({ id, config }) => {
 
         const hashes = torrents.map(t => t.hash);
         const [rdC, tbC, rdA, tbA] = await Promise.all([
-            userConfig.rdKey ? checkRD(hashes, userConfig.rdKey) : {},
-            userConfig.tbKey ? checkTorbox(hashes, userConfig.tbKey) : {},
-            userConfig.rdKey ? getActiveRD(userConfig.rdKey) : {},
-            userConfig.tbKey ? getActiveTorbox(userConfig.tbKey) : {}
+            userConfig.rdKey ? checkRD(hashes, userConfig.rdKey).catch(() => ({})) : {},
+            userConfig.tbKey ? checkTorbox(hashes, userConfig.tbKey).catch(() => ({})) : {},
+            userConfig.rdKey ? getActiveRD(userConfig.rdKey).catch(() => ({})) : {},
+            userConfig.tbKey ? getActiveTorbox(userConfig.tbKey).catch(() => ({})) : {}
         ]);
 
         const rawLangs = userConfig.language || ["ENG"];
