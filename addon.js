@@ -72,9 +72,6 @@ function parseSizeToBytes(sizeStr) {
     return val;
 }
 
-//===============
-// PORTED: Amatsu Resolution extraction
-//===============
 function extractTags(title) {
     let res = "SD";
     if (/(4320p|8k|FUHD)/i.test(title)) res = "8K";
@@ -86,41 +83,35 @@ function extractTags(title) {
     return { res };
 }
 
-//===============
-// PORTED: Amatsu Dynamic Language Regex Map
-//===============
 const LANG_REGEX = {
-    "GER": /\b(ger|deu|german|deutsch)\b/i,
-    "FRE": /\b(fre|fra|french|vostfr|vf)\b/i,
-    "ITA": /\b(ita|italian|it)\b/i,
-    "SPA": /\b(spa|esp|spanish|es)\b/i,
-    "RUS": /\b(rus|russian|ru)\b/i,
-    "POR": /\b(por|pt-br|portuguese)\b/i,
-    "ARA": /\b(ara|arabic|ar)\b/i,
-    "CHI": /\b(chinese|mandarin|chs|cht|big5)\b|(简|繁|中文字幕)/i,
-    "KOR": /\b(kor|korean|ko)\b/i,
-    "HIN": /\b(hin|hindi|hi)\b/i,
-    "POL": /\b(pol|polish|pl)\b/i,
-    "NLD": /\b(nld|dut|dutch|nl)\b/i,
-    "TUR": /\b(tur|turkish|tr)\b/i,
-    "VIE": /\b(vie|vietnamese|vi)\b/i,
-    "IND": /\b(ind|indonesian|id)\b/i,
-    "ENG": /\b(eng|english|subbed|en)\b/i,
-    "JPN": /\b(jpn|japanese|raw|jp)\b/i,
+    "GER": /\b(ger|deu|german|deutsch|de-de)\b|(?:^|\[|\()(de)(?:\]|\)|$)/i,
+    "FRE": /\b(fre|fra|french|vostfr|vf|fr-fr)\b|(?:^|\[|\()(fr)(?:\]|\)|$)/i,
+    "ITA": /\b(ita|italian|it-it)\b|(?:^|\[|\()(it)(?:\]|\)|$)/i,
+    "SPA": /\b(spa|esp|spanish|es-es|es-mx)\b|(?:^|\[|\()(es)(?:\]|\)|$)/i,
+    "RUS": /\b(rus|russian|ru-ru)\b|(?:^|\[|\()(ru)(?:\]|\)|$)/i,
+    "POR": /\b(por|pt-br|portuguese|pt-pt)\b|(?:^|\[|\()(pt)(?:\]|\)|$)/i,
+    "ARA": /\b(ara|arabic|ar-sa)\b|(?:^|\[|\()(ar)(?:\]|\)|$)/i,
+    "CHI": /\b(chi|chinese|chs|cht|mandarin|zh-cn|zh-tw)\b|(?:^|\[|\()(zh)(?:\]|\)|$)|(简|繁|中文字幕)/i,
+    "KOR": /\b(kor|korean|ko-kr)\b|(?:^|\[|\()(ko)(?:\]|\)|$)/i,
+    "HIN": /\b(hin|hindi|hi-in)\b|(?:^|\[|\()(hi)(?:\]|\)|$)/i,
+    "POL": /\b(pol|polish|pl-pl)\b|(?:^|\[|\()(pl)(?:\]|\)|$)/i,
+    "NLD": /\b(nld|dut|dutch|nl-nl)\b|(?:^|\[|\()(nl)(?:\]|\)|$)/i,
+    "TUR": /\b(tur|turkish|tr-tr)\b|(?:^|\[|\()(tr)(?:\]|\)|$)/i,
+    "VIE": /\b(vie|vietnamese|vi-vn)\b|(?:^|\[|\()(vi)(?:\]|\)|$)/i,
+    "IND": /\b(ind|indonesian|id-id)\b|(?:^|\[|\()(id)(?:\]|\)|$)/i,
+    "ENG": /\b(eng|english|subbed|en-us|en-gb)\b|(?:^|\[|\()(en)(?:\]|\)|$)/i,
+    "JPN": /\b(jpn|japanese|raw|jp-jp)\b|(?:^|\[|\()(jp)(?:\]|\)|$)/i,
     "MULTI": /(multi|dual|multi-audio|multi-sub)/i
 };
 
 function extractLanguage(title, userLangs = []) {
     const lower = title.toLowerCase();
-    
     for (let lang of userLangs) {
         if (LANG_REGEX[lang] && LANG_REGEX[lang].test(lower)) return lang;
     }
-    
     if (LANG_REGEX["MULTI"].test(lower)) return "MULTI";
     if (LANG_REGEX["ENG"].test(lower)) return "ENG";
     if (LANG_REGEX["JPN"].test(lower)) return "JPN";
-    
     return "ENG"; 
 }
 
@@ -146,7 +137,6 @@ function generateDynamicPoster(title) {
         } else { line += word + " "; }
     }
     if (line) lines.push(line.trim());
-    
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
 }
 
@@ -358,7 +348,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
             const filesRD = rdC[hashLow]; const progRD = rdA[hashLow];
             const filesTB = tbC[hashLow]; const progTB = tbA[hashLow];
             
-            const isBatch = getBatchRange(t.title) !== null;
             const streamLang = extractLanguage(t.title, userLangs);
             const flag = flags[streamLang] || "🇬🇧";
             const { res } = extractTags(t.title);
@@ -376,28 +365,28 @@ builder.defineStreamHandler(async ({ id, config }) => {
                 }).map(f => {
                     let subLang = "English";
                     const n = (f.name || f.path || "").toLowerCase();
-                    if (/ger|deu|deutsch/i.test(n)) subLang = "German";
-                    else if (/spa|esp|spanish/i.test(n)) subLang = "Spanish";
-                    else if (/rus|russian/i.test(n)) subLang = "Russian";
-                    else if (/fre|fra|french|vostfr/i.test(n)) subLang = "French";
-                    else if (/ita|italian/i.test(n)) subLang = "Italian";
-                    else if (/por|portuguese/i.test(n)) subLang = "Portuguese";
-                    else if (/pol|polish/i.test(n)) subLang = "Polish";
-                    else if (/chi|chinese|zho/i.test(n)) subLang = "Chinese";
-                    else if (/ara|arabic/i.test(n)) subLang = "Arabic";
-                    else if (/jpn|japanese/i.test(n)) subLang = "Japanese";
-                    else if (/kor|korean/i.test(n)) subLang = "Korean";
-                    else if (/hin|hindi/i.test(n)) subLang = "Hindi";
-                    else if (/eng|english/i.test(n)) subLang = "English";
+                    const safeName = n.replace(/[\W_]+/g, " "); 
+                    
+                    if (/\b(ger|deu|deutsch|de|de de)\b/i.test(safeName)) subLang = "German";
+                    else if (/\b(spa|esp|spanish|es|es es|es mx)\b/i.test(safeName)) subLang = "Spanish";
+                    else if (/\b(rus|russian|ru|ru ru)\b/i.test(safeName)) subLang = "Russian";
+                    else if (/\b(fre|fra|french|vostfr|vf|fr|fr fr)\b/i.test(safeName)) subLang = "French";
+                    else if (/\b(ita|italian|it|it it)\b/i.test(safeName)) subLang = "Italian";
+                    else if (/\b(por|portuguese|pt br|pt|pt pt)\b/i.test(safeName)) subLang = "Portuguese";
+                    else if (/\b(pol|polish|pl|pl pl)\b/i.test(safeName)) subLang = "Polish";
+                    else if (/\b(chi|chinese|zho|zh|zh cn|zh tw)\b/i.test(safeName)) subLang = "Chinese";
+                    else if (/\b(ara|arabic|ar|ar sa)\b/i.test(safeName)) subLang = "Arabic";
+                    else if (/\b(jpn|japanese|jp|jp jp)\b/i.test(safeName)) subLang = "Japanese";
+                    else if (/\b(kor|korean|ko|ko kr)\b/i.test(safeName)) subLang = "Korean";
+                    else if (/\b(hin|hindi|hi|hi in)\b/i.test(safeName)) subLang = "Hindi";
+                    else if (/\b(eng|english|en|en us|en gb|en au)\b/i.test(safeName)) subLang = "English";
+                    
                     const extMatch = n.match(/\.(ass|srt|ssa|vtt)$/);
                     const ext = extMatch ? extMatch[1].toUpperCase() : "SUB";
                     return { id: f.id, url: BASE_URL + "/sub/" + provider + "/" + apiKey + "/" + t.hash + "/" + f.id + "?filename=" + encodeURIComponent(n), lang: subLang + " (" + ext + ")" };
                 });
             };
 
-            //===============
-            // PORTED: Amatsu UI Strings & Stream Descriptions
-            //===============
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
                 const isCached = matchedFile || progRD === 100;
@@ -425,9 +414,6 @@ builder.defineStreamHandler(async ({ id, config }) => {
             }
         });
 
-        //===============
-        // PORTED: Amatsu 3-Phase Sorter
-        //===============
         return { 
             streams: streams.sort((a, b) => {
                 const getLangScore = (l) => {
