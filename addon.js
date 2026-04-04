@@ -1,6 +1,5 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// The main entry point for the Stremio logic.
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -271,10 +270,11 @@ builder.defineStreamHandler(async ({ id, config }) => {
         const userConfig = parseConfig(config);
         let searchTitle = "", requestedEp = 1, aniListIdForFallback = null;
         
+        const parts = id.split(":");
+
         if (id.startsWith("anilist:")) {
-            const parts = id.split(":");
             aniListIdForFallback = isNaN(parts[1]) ? parts.find(p => !isNaN(p) && p.length > 0) : parts[1];
-            if (parts.length > 2 && parts[2]) {
+            if (parts.length > 2 && parts[2] && isNaN(parts[2])) {
                 searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[2]));
             } else {
                 if (aniListIdForFallback) {
@@ -282,12 +282,10 @@ builder.defineStreamHandler(async ({ id, config }) => {
                     if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
                 }
             }
-            const lastPart = parts[parts.length - 1];
-            if (!isNaN(lastPart) && parts.length > 2) requestedEp = parseInt(lastPart, 10);
+            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
         } else if (id.startsWith("sukebei:")) {
-            const parts = id.split(":");
             searchTitle = parts[1] ? sanitizeSearchQuery(fromBase64Safe(parts[1])) : "";
-            if (parts.length >= 4) requestedEp = parseInt(parts[3], 10);
+            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
         }
 
         if (!searchTitle) return { streams: [] };
