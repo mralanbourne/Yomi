@@ -8,7 +8,7 @@ const axios = require("axios");
 const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime, getJikanMeta, fetchEpisodeDetails } = require("./lib/anilist");
 const { searchSukebeiForHentai, cleanTorrentTitle } = require("./lib/sukebei");
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require("./lib/debrid");
-const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile } = require("./lib/parser");
+const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile, verifyTitleMatch } = require("./lib/parser");
 
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
@@ -31,7 +31,7 @@ function fromBase64Safe(str) {
 //===============
 const manifest = {
     id: "org.community.yomi",
-    version: "6.8.6", 
+    version: "6.8.7", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -343,6 +343,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
         if (!searchTitle) return { streams: [] };
         
+        let validSearchTitles = [searchTitle];
         let torrents = await searchSukebeiForHentai(searchTitle);
         
         if (!torrents.length) {
@@ -366,12 +367,18 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 }
 
                 for (const altTitle of fallbackTitles) {
+                    validSearchTitles.push(altTitle);
                     const cleanAlt = sanitizeSearchQuery(altTitle);
                     torrents = await searchSukebeiForHentai(cleanAlt);
                     if (torrents.length > 0) break;
                 }
             }
         }
+
+        //===============
+        // STRICT TITLE VERIFICATION
+        //===============
+        torrents = torrents.filter(t => verifyTitleMatch(t.title, validSearchTitles));
 
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
 
@@ -434,7 +441,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     
                     const extMatch = n.match(/\.(ass|srt|ssa|vtt)$/);
                     const ext = extMatch ? extMatch[1].toUpperCase() : "SUB";
-                    return { id: f.id, url: BASE_URL + "/sub/" + provider + "/" + apiKey + "/" + t.hash + "/" + f.id + "?filename=" + encodeURIComponent(n), lang: subLang + " (" + ext + ")" };
+                    return { id: f.id, url: BASE_URL + "/sub/" + provider + apiKey + "/" + t.hash + "/" + f.id + "?filename=" + encodeURIComponent(n), lang: subLang + " (" + ext + ")" };
                 });
             };
 
