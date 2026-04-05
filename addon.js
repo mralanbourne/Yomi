@@ -13,6 +13,11 @@ const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
 
+//===============
+// SECURITY: INTERNAL KEYS
+//===============
+const INTERNAL_TB_KEY = process.env.INTERNAL_TORBOX_KEY || "";
+
 function toBase64Safe(str) {
     return Buffer.from(str, "utf8").toString("base64").replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
@@ -21,15 +26,29 @@ function fromBase64Safe(str) {
     return Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/'), "base64").toString("utf8");
 }
 
+//===============
+// ADDON MANIFEST
+//===============
 const manifest = {
     id: "org.community.yomi",
-    version: "6.8.4", 
+    version: "6.8.6", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
-    resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "anime"],
-    idPrefixes: ["anilist:", "sukebei:", "kitsu:", "tt"],
+    resources: [
+        "catalog",
+        {
+            name: "meta",
+            types: ["movie", "series", "anime"],
+            idPrefixes: ["anilist:", "sukebei:"]
+        },
+        {
+            name: "stream",
+            types: ["movie", "series", "anime"],
+            idPrefixes: ["anilist:", "sukebei:", "kitsu:", "tt"]
+        }
+    ],
     catalogs: [
         { id: "sukebei_trending", type: "series", name: "Yomi Trending" },
         { id: "sukebei_top", type: "series", name: "Yomi Top Rated" },
@@ -275,6 +294,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
     try {
         const userConfig = parseConfig(config);
+        if (!userConfig.rdKey && !userConfig.tbKey) return { streams: [] };
+
         let searchTitle = "", requestedEp = 1, aniListIdForFallback = null;
         
         const parts = id.split(":");
@@ -357,7 +378,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         const hashes = torrents.map(t => t.hash);
         const [rdC, tbC, rdA, tbA] = await Promise.all([
             userConfig.rdKey ? checkRD(hashes, userConfig.rdKey).catch(() => ({})) : {},
-            userConfig.tbKey ? checkTorbox(hashes, userConfig.tbKey).catch(() => ({})) : {},
+            (userConfig.tbKey || INTERNAL_TB_KEY) ? checkTorbox(hashes, userConfig.tbKey || INTERNAL_TB_KEY).catch(() => ({})) : {},
             userConfig.rdKey ? getActiveRD(userConfig.rdKey).catch(() => ({})) : {},
             userConfig.tbKey ? getActiveTorbox(userConfig.tbKey).catch(() => ({})) : {}
         ]);
@@ -417,35 +438,77 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 });
             };
 
+            // RD LOGIC
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
                 const isCached = matchedFile || progRD === 100;
                 const isDownloading = progRD !== undefined && progRD < 100;
-                const uiName = isCached ? `YOMI [⚡ RD]\n🎥 ${res}${langAddon}` : (isDownloading ? `YOMI [⏳ ${progRD}% RD]\n🎥 ${res}${langAddon}` : `YOMI [☁️ RD]\n🎥 ${res}${langAddon}`);
                 
+                let uiName = `YOMI [☁️ RD]`;
+                let streamStatus = "☁️ Download";
+
                 if (isCached) {
-                    streams.push({ name: uiName, description: `${flag} Sukebei | ⚡ Cached\n📄 ${t.title}\n💾 ${t.size} | 👥 ${t.seeders || 0} Seeders`, url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, subtitles: buildSubs(filesRD, "realdebrid", userConfig.rdKey, requestedEp), behaviorHints: { bingeGroup: "yomi_rd_" + t.hash, filename: matchedFile ? matchedFile.name : undefined }, _bytes: bytes, _lang: streamLang, _isCached: true, _res: res });
-                } else if (!filesRD && isTitleMatchingEpisode(t.title, requestedEp)) {
-                    streams.push({ name: uiName, description: `${flag} Sukebei | ☁️ Download\n📄 ${t.title}\n💾 ${t.size} | 👥 ${t.seeders || 0} Seeders`, url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, behaviorHints: { notWebReady: true, bingeGroup: "yomi_uncached_rd_" + t.hash }, _bytes: bytes, _lang: streamLang, _isCached: false, _res: res });
+                    uiName = `YOMI [⚡ RD]`;
+                    streamStatus = "⚡ Cached";
+                } else if (isDownloading) {
+                    uiName = `YOMI [⏳ ${progRD}% RD]`;
+                    streamStatus = `⏳ ${progRD}% Downloading`;
+                } else if (filesTB && filesTB.length > 0) {
+                    uiName = `YOMI [⚡ RD+]`;
+                    streamStatus = "⚡ Fast Download";
+                }
+                uiName += `\n🎥 ${res}${langAddon}`;
+
+                if (isCached || isDownloading || isTitleMatchingEpisode(t.title, requestedEp)) {
+                    streams.push({
+                        name: uiName,
+                        description: `${flag} Sukebei | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${t.seeders || 0} Seeders`,
+                        url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp,
+                        subtitles: isCached ? buildSubs(filesRD, "realdebrid", userConfig.rdKey, requestedEp) : [],
+                        behaviorHints: { bingeGroup: (isCached ? "yomi_rd_" : "yomi_uncached_rd_") + t.hash, filename: matchedFile ? matchedFile.name : undefined, notWebReady: !isCached },
+                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progRD || 0
+                    });
                 }
             }
 
+            // TB LOGIC
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp) : null;
                 const isCached = matchedFile || progTB === 100;
                 const isDownloading = progTB !== undefined && progTB < 100;
-                const uiName = isCached ? `YOMI [⚡ TB]\n🎥 ${res}${langAddon}` : (isDownloading ? `YOMI [⏳ ${progTB}% TB]\n🎥 ${res}${langAddon}` : `YOMI [☁️ TB]\n🎥 ${res}${langAddon}`);
                 
+                let uiName = `YOMI [☁️ TB]`;
+                let streamStatus = "☁️ Download";
+
                 if (isCached) {
-                    streams.push({ name: uiName, description: `${flag} Sukebei | ⚡ Cached\n📄 ${t.title}\n💾 ${t.size} | 👥 ${t.seeders || 0} Seeders`, url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, subtitles: buildSubs(filesTB, "torbox", userConfig.tbKey, requestedEp), behaviorHints: { bingeGroup: "yomi_tb_" + t.hash, filename: matchedFile ? matchedFile.name : undefined }, _bytes: bytes, _lang: streamLang, _isCached: true, _res: res });
-                } else if (!filesTB && isTitleMatchingEpisode(t.title, requestedEp)) {
-                    streams.push({ name: uiName, description: `${flag} Sukebei | ☁️ Download\n📄 ${t.title}\n💾 ${t.size} | 👥 ${t.seeders || 0} Seeders`, url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, behaviorHints: { notWebReady: true, bingeGroup: "yomi_uncached_tb_" + t.hash }, _bytes: bytes, _lang: streamLang, _isCached: false, _res: res });
+                    uiName = `YOMI [⚡ TB]`;
+                    streamStatus = "⚡ Cached";
+                } else if (isDownloading) {
+                    uiName = `YOMI [⏳ ${progTB}% TB]`;
+                    streamStatus = `⏳ ${progTB}% Downloading`;
+                }
+                uiName += `\n🎥 ${res}${langAddon}`;
+
+                if (isCached || isDownloading || isTitleMatchingEpisode(t.title, requestedEp)) {
+                    streams.push({
+                        name: uiName,
+                        description: `${flag} Sukebei | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${t.seeders || 0} Seeders`,
+                        url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp,
+                        subtitles: isCached ? buildSubs(filesTB, "torbox", userConfig.tbKey, requestedEp) : [],
+                        behaviorHints: { bingeGroup: (isCached ? "yomi_tb_" : "yomi_uncached_tb_") + t.hash, filename: matchedFile ? matchedFile.name : undefined, notWebReady: !isCached },
+                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0
+                    });
                 }
             }
         });
 
         return { 
             streams: streams.sort((a, b) => {
+                if (a._prog > 0 && b._prog === 0) return -1;
+                if (b._prog > 0 && a._prog === 0) return 1;
+
+                if (a._isCached !== b._isCached) return b._isCached ? 1 : -1;
+
                 const getLangScore = (l) => {
                     if (userLangs.includes(l)) return 200 - userLangs.indexOf(l);
                     if (l === "MULTI") return 150;
@@ -464,8 +527,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     return 0; 
                 };
 
-                const langScoreA = getLangScore(a._lang) + (a._isCached ? 10 : 0);
-                const langScoreB = getLangScore(b._lang) + (b._isCached ? 10 : 0);
+                const langScoreA = getLangScore(a._lang);
+                const langScoreB = getLangScore(b._lang);
                 
                 if (langScoreA !== langScoreB) return langScoreB - langScoreA;
 
