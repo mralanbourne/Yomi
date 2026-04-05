@@ -16,16 +16,30 @@ const { selectBestVideoFile } = require("./lib/parser");
 const app = express();
 app.use(express.json()); 
 
+//===============
+// CORS & PREFLIGHT HANDLING
+//===============
+app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD");
+    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, Range");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range");
+
+    if (req.method === "OPTIONS") {
+        return res.status(204).end();
+    }
+    
+    next();
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(path.join(__dirname, "static")));
 
 const port = process.env.PORT || 7000;
 
-
 // Fallback for missing environment variables when self-hosting
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
-
 
 // API status endpoint for platforms such as Heroku or Koyeb
 app.get("/health", (req, res) => res.status(200).json({ status: "alive" }));
@@ -65,10 +79,7 @@ app.get("/configure", (req, res) => {
 // Includes critical bandwidth-leak protections and strict upstream MIME parsing.
 //===============
 app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "*");
     const { provider, apiKey, hash, fileId } = req.params;
-    
     
     // Flag to detect early client disconnection and prevent dangling streams
     let clientAborted = false;
@@ -83,7 +94,6 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
         if (provider === "realdebrid") {
             let list = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { headers: { Authorization: "Bearer " + apiKey } });
             let torrent = list.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
-            
             
             // Retry-Logic
             if (!torrent) {
@@ -107,7 +117,6 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
                     let targetLink = null;
                     let linkCounter = 0;
                     
-                    
                     // Real-Debrid maps links ONLY to selected files, not all files. Calculate the correct offset.
                     for (let i = 0; i < info.data.files.length; i++) {
                         if (i === fileIdx) {
@@ -127,7 +136,6 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
             }
         } else if (provider === "torbox") {
 
-            
             // Retry-Logic for Torbox
             let dlRes = null;
             try {
@@ -145,7 +153,6 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
         if (!downloadUrl) return res.status(404).send("Subtitle not found or not ready yet.");
         
         const subResponse = await axios.get(downloadUrl, { responseType: "stream" });
-        
         
         // If the client aborted during the async await cycles, destroy the stream immediately to save bandwidth
         if (clientAborted) {
@@ -168,7 +175,6 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
         }
         
         res.set("Content-Type", finalMime);
-        
         
         // Prevent socket memory leaks if the download errors out
         subResponse.data.on("error", (err) => {
@@ -219,8 +225,6 @@ function serveArchiveVideo(req, res) {
 //===============
 app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
     const { provider, apiKey, hash, episode } = req.params;
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "*");
     const requestedEp = episode || "1";
     const magnet = "magnet:?xt=urn:btih:" + hash;
     
@@ -240,7 +244,6 @@ app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
             }
             
             let info = await axios.get("https://api.real-debrid.com/rest/1.0/torrents/info/" + torrent.id, { headers: { Authorization: "Bearer " + apiKey } });
-            
             
             // Catch dead or invalid torrents immediately to avoid infinite loading loops
             const badStates = ["magnet_error", "error", "virus", "dead"];
@@ -283,7 +286,6 @@ app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
             if (!bestFileFresh) {
                 return serveArchiveVideo(req, res);
             }
-            
             
             // Resolves the edge case where a legacy torrent has an unselected episode
             if (bestFileFresh.selected === 0) {
