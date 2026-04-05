@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Yomi Setup | Forbidden Gateway</title>
 
     <link rel="icon" type="image/png" href="/yomi.png">
@@ -36,11 +36,18 @@
             border: 1px solid rgba(255, 255, 255, 0.05);
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 1), inset 0 0 20px rgba(233, 30, 99, 0.02);
             animation: float 6s ease-in-out infinite;
+            margin-top: auto;
+            margin-bottom: auto;
         }
 
         @keyframes float {
             0%, 100% { transform: translateY(0px); }
             50% { transform: translateY(-12px); }
+        }
+
+        @media (max-width: 768px) {
+            body { animation: none; }
+            .glass-card { animation: none; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); margin-top: 2rem; margin-bottom: 2rem; }
         }
 
         .neon-text {
@@ -165,9 +172,9 @@
         }
     </style>
 </head>
-<body class="text-gray-300 min-h-screen flex items-center justify-center p-4 overflow-hidden relative border-t-2 border-pink-500/10">
+<body class="text-gray-300 min-h-screen flex flex-col p-4 overflow-x-hidden overflow-y-auto relative border-t-2 border-pink-500/10">
 
-    <div class="absolute top-6 right-6 flex items-center space-x-3 bg-black/50 backdrop-blur-md border border-white/5 rounded-full px-4 py-2 z-50">
+    <div class="fixed top-6 right-6 flex items-center space-x-3 bg-black/50 backdrop-blur-md border border-white/5 rounded-full px-4 py-2 z-50">
         <div id="statusDot" class="w-2.5 h-2.5 rounded-full bg-gray-500 animate-pulse"></div>
         <span id="statusText" class="text-[10px] font-mono tracking-widest uppercase text-gray-400">Checking Sukebei...</span>
     </div>
@@ -176,10 +183,10 @@
         <img src="/yomi_large.png" class="bg-logo" alt="">
     </div>
 
-    <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-pink-600/10 rounded-full mix-blend-screen filter blur-[100px] opacity-40 animate-pulse"></div>
-    <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full mix-blend-screen filter blur-[100px] opacity-40 animate-pulse" style="animation-delay: 2s;"></div>
+    <div class="fixed top-1/4 left-1/4 w-96 h-96 bg-pink-600/10 rounded-full mix-blend-screen filter blur-[100px] opacity-40 animate-pulse z-0"></div>
+    <div class="fixed bottom-1/4 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full mix-blend-screen filter blur-[100px] opacity-40 animate-pulse z-0" style="animation-delay: 2s;"></div>
 
-    <div class="glass-card p-12 rounded-[2.5rem] max-w-md w-full relative z-10 text-center mt-8">
+    <div class="glass-card p-12 rounded-[2.5rem] max-w-md w-full relative z-10 text-center mx-auto my-8">
 
         <div class="mb-14">
             <h1 class="text-6xl font-extrabold tracking-tighter mb-2 neon-text">YOMI</h1>
@@ -281,7 +288,6 @@
             const rd = document.getElementById('rdKey').value.trim();
             const tb = document.getElementById('tbKey').value.trim();
 
-            // Dynamically extracts user-selected language filters from the UI checkboxes
             const langCheckboxes = document.querySelectorAll('.lang-cb:checked');
             const languages = Array.from(langCheckboxes).map(cb => cb.value);
             
@@ -298,19 +304,16 @@
                 return null;
             }
 
-            // Appends the language array to the raw configuration object
             const rawConfig = { showTrending, showTop };
             if (rd) rawConfig.rdKey = rd;
             if (tb) rawConfig.tbKey = tb;
             if (languages.length > 0) rawConfig.language = languages;
 
-            // Transpiles the config into a secure Base64 format to bypass Node URL limitations
             const base64Payload = btoa(JSON.stringify(rawConfig))
                 .replace(/\+/g, '-')
                 .replace(/\//g, '_')
                 .replace(/=/g, '');
 
-            // Nests the base64 string under the exact 'Yomi' key expected by the backend parser
             const finalConfig = { Yomi: base64Payload };
             const configStr = encodeURIComponent(JSON.stringify(finalConfig));
             
@@ -378,7 +381,6 @@
             document.getElementById('showTrending').addEventListener('change', generateManifestUrl);
             document.getElementById('showTop').addEventListener('change', generateManifestUrl);
 
-            // Event listeners attached to checkboxes to instantly regenerate manifest on language selection
             document.querySelectorAll('.lang-cb').forEach(cb => {
                 cb.addEventListener('change', generateManifestUrl);
             });
