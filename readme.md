@@ -5,7 +5,7 @@
 <h1 align="center">YOMI: Your Forbidden Gateway</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-6.8.2-e91e63.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/version-6.9.0-e91e63.svg?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Stremio-Addon-8a5a9e?style=for-the-badge&logo=stremio" alt="Stremio Addon">
   <img src="https://img.shields.io/badge/Status-Online-success?style=for-the-badge" alt="Status Online">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License MIT">
@@ -13,7 +13,8 @@
 </p>
 
 <p align="center">
-  <strong>The definitive high-performance bridge between Sukebei and Stremio. Access the largest library of uncensored adult anime & Hentai via Real-Debrid or Torbox with advanced episode parsing, a strict 3-phase sorting engine, subtitle injection, and zero server-side tracking.</strong>
+  <strong>The definitive high-performance bridge between Sukebei and Stremio. Access the largest library of uncensored adult anime & Hentai via Real-Debrid or Torbox with advanced episode parsing, a strict 3-phase sorting engine, subtitle injection, and zero server-side tracking.</strong><br />
+  🍏 Fully Compatible with Stremio Web (Linux / iOS / iPadOS) & AIOStreams 🖤
 </p>
 
 <div align="center">
@@ -52,14 +53,15 @@
 4. Click "Install" or copy your manifest url to add your personalized configuration to Stremio.
 5. Use the global Stremio search. Results will appear under the **"Yomi Search"** catalog.
 
-### ✨ Key Features & Engine Upgrades
+### ✨ Key Features & Next-Gen Engine Upgrades
+* **🍏 Apple iOS & Flatpak Ready:** Yomi features a heavily hardened CORS and Preflight (`OPTIONS`) architecture, guaranteeing seamless stream and subtitle loading on strict WebKit browsers (iPhone/iPad Safari) and Linux sandboxes.
+* **🔄 Automated Tracker Failover & Proxy:** Sukebei trackers are often targeted by ISP blocks. Yomi now features an intelligent mirror-rotation engine (nyaa.si, iss.one, etc.) with optional Proxy tunneling to bypass aggressive Cloudflare challenges and DNS bans.
 * **🧠 3-Phase Multi-Pass Sorter:** The stream sorting engine guarantees absolute precision. Streams are strictly cascaded by: **1. Language Priority & Cache Status ➔ 2. Video Resolution (8K down to SD) ➔ 3. File Size**. 
-* **📦 Bulletproof Batch Routing (Binge-Ready):** Uploaders on Sukebei use zero naming conventions. Yomi's multi-tier parsing engine isolates individual files inside massive batch folders. Clicking "Next Episode" in Stremio seamlessly loads the correct file in a batch release.
-* **🛡️ Precision Language & Subtitle Proxy:** No more false positives! Yomi utilizes strict ISO boundaries to differentiate between European words (like "de" or "es") and actual release tags. External `.ass`, `.srt`, `.vtt`, and `.ssa` files are automatically scrubbed, proxied, and injected into the Stremio player as selectable tracks.
-* **⛩️ Asian Raw & Versioning Support:** Advanced non-digit boundary parsing safely captures Japanese volume markers (第, 巻), single-character tags (E05), and strictly protects Hentai versioning tags (like `v2` or `v3` for decensored re-releases) from being misidentified as episode numbers.
+* **🚀 Smart Movie & OVA Bypass:** No more false-negative drops! Yomi's adaptive parser perfectly differentiates between single-file movies/OVAs and multi-episode series.
+* **📦 Bulletproof Batch Routing (Binge-Ready):** Uploaders on Sukebei use zero naming conventions. Yomi intelligently recognizes international batch formats (like Spanish `01 a 12`) and isolates exact individual files inside massive batch folders. Clicking "Next Episode" in Stremio seamlessly loads the correct file.
+* **⛩️ Aggressive Unicode Sanitization:** Advanced reverse-digit extraction safely captures Japanese volume markers (第, 巻), single-character tags (E05), and strictly protects Hentai versioning tags (like `v2` or `v3` for decensored re-releases) or audio channels (`5.1`) from being misidentified as episode numbers.
+* **🛡️ Precision Subtitle Proxy:** No more false positives! Yomi utilizes strict ISO boundaries to differentiate between European words (like "de" or "es") and actual release tags. External `.ass`, `.srt`, `.vtt`, and `.ssa` files are automatically scrubbed, proxied with bandwidth-leak protection, and injected into the Stremio player.
 * **🧠 Dual-Database Intelligence (AniList + MAL):** Yomi scrapes AniList for high-quality metadata. If an obscure adult release is missing, it automatically falls back to **MyAnimeList (Jikan API)** to fetch official posters, synopsis, and true episode counts.
-* **🎯 Embedded MKV Priority:** The engine automatically prefers `.mkv` files over `.mp4` when resolving episodes, ensuring you have access to embedded dual-audio and subtitle tracks.
-* **⚡ Clean UI Metrics:** Instantly spot the health of a torrent with injected `👥 Seeders` counts and clear `⚡ Cached` or `☁️ Download` indicators.
 
 ---
 
@@ -71,24 +73,31 @@ Yomi is optimized for PaaS environments like Koyeb. It requires no persistent st
 
 #### 1. Prerequisites
 * **Node.js:** v18 or higher.
+* **Docker** (Recommended).
 
 #### 2. Deployment (Docker)
 **Clone the Repo:**
 ```bash
-git clone https://github.com/mralanbourne/Yomi.git
+git clone [https://github.com/mralanbourne/Yomi.git](https://github.com/mralanbourne/Yomi.git)
 cd Yomi
 ```
 Build and Run:
-
 ```bash
+
 docker build -t yomi-addon .
 docker run -p 7000:7000 -e BASE_URL="https://your-domain.com" yomi-addon
 ```
-#### Environment Variables:
+#### 3. Environment Variables:
 
-  **BASE_URL: REQUIRED.** The public URL of your deployment (e.g., ```https://yomi.yourdomain.com```). Yomi requires this to correctly construct the Subtitle-Proxy and Stream-Resolver links. If this is missing or incorrect, streams and subtitles will fail to load!
+   **BASE_URL: REQUIRED.** The public URL of your deployment (e.g., https://yomi.yourdomain.com). Yomi requires this to correctly construct the Subtitle-Proxy and Stream-Resolver links. If missing or incorrect, streams will fail to load!
 
-  **PORT: Optional. Defaults to 7000.**
+  **ROOT_TORBOX_KEY: REQUIRED (if supporting Torbox).** Master Torbox API Key utilized for backend operations and fallback Cache status requests NOTHING ELSE. provides RD Users with an approximation if their Content is on RD cause the normal RD Request is heavily rate limited which is why we ask Torbox. in 99% of cases Stuff that is on TB is on RD.
+
+  **PORT: Optional.** Defaults to 7000.
+
+  **SUKEBEI_DOMAIN: Optional.** Specify another custom Sukebei mirror (e.g., https://sukebei.nyaa.iss.one) if the main domain is blocked.
+
+  **PROXY_URL: Optional.** Pass traffic through a secure proxy (e.g., http://user:pass@host:port) to bypass aggressive Cloudflare challenges or ISP blocks.
 
 #### 4. Customizing the "Waiting" Video
 
