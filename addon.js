@@ -19,11 +19,11 @@ BASE_URL = BASE_URL.replace(/\/+$/, "");
 const INTERNAL_TB_KEY = process.env.INTERNAL_TORBOX_KEY || "";
 
 function toBase64Safe(str) {
-    return Buffer.from(str, "utf8").toString("base64").replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    return Buffer.from(str, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
 function fromBase64Safe(str) {
-    return Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/'), "base64").toString("utf8");
+    return Buffer.from(str.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 }
 
 //===============
@@ -31,7 +31,7 @@ function fromBase64Safe(str) {
 //===============
 const manifest = {
     id: "org.community.yomi",
-    version: "6.8.7", 
+    version: "6.8.8", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -66,8 +66,8 @@ function parseConfig(config) {
     let parsed = {};
     try {
         if (config && config.Yomi) {
-            let b64 = config.Yomi.replace(/-/g, '+').replace(/_/g, '/');
-            while (b64.length % 4) { b64 += '='; } 
+            let b64 = config.Yomi.replace(/-/g, "+").replace(/_/g, "/");
+            while (b64.length % 4) { b64 += "="; } 
             const decoded = Buffer.from(b64, "base64").toString("utf8");
             parsed = JSON.parse(decoded);
         } else {
@@ -134,8 +134,16 @@ function extractLanguage(title, userLangs = []) {
     return "ENG"; 
 }
 
+//===============
+// SANITIZE QUERY
+//===============
 function sanitizeSearchQuery(title) {
-    return title.replace(/\(.*?\)/g, "").replace(/\[.*?\]/g, "").replace(/\s{2,}/g, " ").trim();
+    if (!title) return "";
+    return title.replace(/\(.*?\)/g, "")
+                .replace(/\[.*?\]/g, "")
+                .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]"<>?+|\\・、。「」『』【】［］（）〈〉≪≫《》〔〕…—～〜♥♡★☆♪]/g, " ")
+                .replace(/\s{2,}/g, " ")
+                .trim();
 }
 
 function isTitleMatchingEpisode(title, requestedEp) {
@@ -173,9 +181,10 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
         return { metas: metas.map(m => ({ ...m, type: type === "anime" ? "anime" : "series" })), cacheMaxAge: 43200 };
     }
     if (id === "sukebei_search" && extra.search) {
+        const cleanQuery = sanitizeSearchQuery(extra.search);
         const [anilistMetas, sukebeiTorrents] = await Promise.all([
             searchAdultAnime(extra.search), 
-            searchSukebeiForHentai(extra.search)
+            searchSukebeiForHentai(cleanQuery)
         ]);
         anilistMetas.sort((a, b) => {
             const dateA = a.released ? new Date(a.released).getTime() : Infinity;
@@ -246,7 +255,8 @@ builder.defineMetaHandler(async ({ type, id }) => {
         let epCount = meta.episodes || 1;
         if (epCount === 1 || !meta.episodes) {
             try {
-                const torrents = await searchSukebeiForHentai(searchTitle);
+                // Sukebei Meta Query Sanitization
+                const torrents = await searchSukebeiForHentai(sanitizeSearchQuery(searchTitle));
                 let maxDetected = 1;
                 torrents.forEach(t => {
                     const batch = getBatchRange(t.title);
@@ -327,13 +337,21 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             //===============
             // CINEMETA FALLBACK FOR IOS FUSION
             //===============
+            const imdbId = parts[0];
+            let name = "";
             try {
-                const imdbId = parts[0];
-                const res = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${imdbId}.json`, { timeout: 4000 });
-                searchTitle = sanitizeSearchQuery(res.data?.meta?.name || "");
-            } catch (e) {
-                console.error("[Stream] Cinemeta Fetch Error:", e.message);
+                let res = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${imdbId}.json`, { timeout: 4000 });
+                name = res.data?.meta?.name;
+            } catch(e) {}
+
+            if (!name) {
+                const otherType = type === "movie" ? "series" : "movie";
+                try {
+                    let res2 = await axios.get(`https://v3-cinemeta.strem.io/meta/${otherType}/${imdbId}.json`, { timeout: 4000 });
+                    name = res2.data?.meta?.name;
+                } catch(e) {}
             }
+            searchTitle = sanitizeSearchQuery(name || "");
             if (parts.length > 2) {
                 requestedEp = parseInt(parts[2], 10) || 1;
             } else {
@@ -359,8 +377,11 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     fallbackMeta.synonyms.forEach(syn => { if (/^[a-zA-Z0-9\s\-_!:]+$/.test(syn)) fallbackTitles.add(syn); });
                 }
                 const primaryWords = searchTitle.split(/\s+/);
+                
+                if (primaryWords.length >= 2) fallbackTitles.add(primaryWords.slice(0, 2).join(" "));
                 if (primaryWords.length > 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
                 if (primaryWords.length > 4) fallbackTitles.add(primaryWords.slice(0, 4).join(" "));
+                
                 if (fallbackMeta.altName) {
                     const altWords = fallbackMeta.altName.split(/\s+/);
                     if (altWords.length > 3) fallbackTitles.add(altWords.slice(0, 3).join(" "));
