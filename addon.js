@@ -31,7 +31,7 @@ function fromBase64Safe(str) {
 //===============
 const manifest = {
     id: "org.community.yomi",
-    version: "6.8.9", 
+    version: "6.9.0", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -230,15 +230,16 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
     try {
         if (id.startsWith("anilist:")) {
-            const parts = id.split(":");
-            let aniListId = parts[1];
-            if (isNaN(aniListId)) aniListId = parts.find(p => !isNaN(p) && p.length > 0) || parts[1];
+            let payload = id.replace("anilist:", "");
+            let subParts = payload.split("_");
+            let aniListId = subParts[0];
+            
             const rawMeta = await getAnimeMeta(aniListId);
             if (rawMeta) {
                 searchTitle = rawMeta.name;
                 meta = { ...rawMeta }; 
             } else {
-                searchTitle = (parts.length > 2 && parts[2]) ? fromBase64Safe(parts[2]) : "Unknown Anime";
+                searchTitle = (subParts.length > 1 && subParts[1]) ? fromBase64Safe(subParts[1]) : "Unknown Anime";
                 meta = { id: id, type: "series", name: searchTitle, poster: generateDynamicPoster(searchTitle), baseTime: Date.now(), epMeta: {} };
             }
         } else if (id.startsWith("sukebei:")) {
@@ -263,7 +264,6 @@ builder.defineMetaHandler(async ({ type, id }) => {
         let epCount = meta.episodes || 1;
         if (epCount === 1 || !meta.episodes) {
             try {
-                // Sukebei Meta Query Sanitization
                 const torrents = await searchSukebeiForHentai(sanitizeSearchQuery(searchTitle));
                 let maxDetected = 1;
                 torrents.forEach(t => {
@@ -319,9 +319,12 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         const parts = id.split(":");
 
         if (id.startsWith("anilist:")) {
-            aniListIdForFallback = isNaN(parts[1]) ? parts.find(p => !isNaN(p) && p.length > 0) : parts[1];
-            if (parts.length > 2 && parts[2] && isNaN(parts[2])) {
-                searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[2]));
+            let payload = parts[1];
+            let subParts = payload ? payload.split("_") : [];
+            aniListIdForFallback = subParts[0];
+            
+            if (subParts.length > 1 && subParts[1]) {
+                searchTitle = sanitizeSearchQuery(fromBase64Safe(subParts[1]));
             } else {
                 if (aniListIdForFallback) {
                     const freshMeta = await getAnimeMeta(aniListIdForFallback);
@@ -342,9 +345,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
             requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
         } else if (id.startsWith("tt")) {
-            //===============
-            // CINEMETA FALLBACK FOR IOS FUSION
-            //===============
             const imdbId = parts[0];
             let name = "";
             try {
@@ -404,9 +404,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
 
-        //===============
-        // STRICT TITLE VERIFICATION
-        //===============
         torrents = torrents.filter(t => verifyTitleMatch(t.title, validSearchTitles));
 
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
@@ -474,7 +471,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 });
             };
 
-            // RD LOGIC
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
                 const isCached = matchedFile || progRD === 100;
@@ -507,7 +503,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 }
             }
 
-            // TB LOGIC
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp) : null;
                 const isCached = matchedFile || progTB === 100;
