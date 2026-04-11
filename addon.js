@@ -31,7 +31,7 @@ function fromBase64Safe(str) {
 //===============
 const manifest = {
     id: "org.community.yomi",
-    version: "6.9.1", 
+    version: "6.9.2", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -41,12 +41,12 @@ const manifest = {
         {
             name: "meta",
             types: ["movie", "series", "anime"],
-            idPrefixes: ["yomi_al_", "yomi_sk_"]
+            idPrefixes: ["anilist:", "sukebei:"]
         },
         {
             name: "stream",
             types: ["movie", "series", "anime"],
-            idPrefixes: ["yomi_al_", "yomi_sk_", "kitsu:", "tt"]
+            idPrefixes: ["anilist:", "sukebei:", "kitsu:", "tt"]
         }
     ],
     catalogs: [
@@ -174,6 +174,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
         const metas = await getLatestAdultAnime();
         return { metas: metas.map(m => ({ ...m, type: type === "anime" ? "anime" : "series" })), cacheMaxAge: 14400 };
     }
+    
     if (id === "sukebei_trending") {
         if (userConfig.showTrending === false) return { metas: [] };
         const metas = await getTrendingAdultAnime();
@@ -209,7 +210,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
         Object.keys(rawGroups).forEach(cleanName => {
             if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
                 finalMetas.push({ 
-                    id: "yomi_sk_" + toBase64Safe(cleanName), type: type === "anime" ? "anime" : "series", 
+                    id: "sukebei:" + toBase64Safe(cleanName), type: type === "anime" ? "anime" : "series", 
                     name: cleanName.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(cleanName) 
                 });
             }
@@ -220,27 +221,27 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
-    if (!id.startsWith("yomi_al_") && !id.startsWith("yomi_sk_")) return Promise.resolve({ meta: null });
+    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) return Promise.resolve({ meta: null });
     console.log("[Meta Request] Fetching details for ID: " + id);
     let meta = null, searchTitle = "";
 
     try {
-        if (id.startsWith("yomi_al_")) {
-            let payload = id.replace("yomi_al_", "");
-            let subParts = payload.split("_");
-            let aniListId = subParts[0];
+        if (id.startsWith("anilist:")) {
+            const parts = id.split(":");
+            let aniListId = parts[1];
             
             const rawMeta = await getAnimeMeta(aniListId);
             if (rawMeta) {
                 searchTitle = rawMeta.name;
                 meta = { ...rawMeta }; 
             } else {
-                searchTitle = (subParts.length > 1 && subParts[1]) ? fromBase64Safe(subParts[1]) : "Unknown Anime";
+                searchTitle = "Unknown Anime";
                 meta = { id: id, type: "series", name: searchTitle, poster: generateDynamicPoster(searchTitle), baseTime: Date.now(), epMeta: {} };
             }
-        } else if (id.startsWith("yomi_sk_")) {
-            let payload = id.replace("yomi_sk_", "");
-            searchTitle = payload ? fromBase64Safe(payload) : "Unknown";
+        } else if (id.startsWith("sukebei:")) {
+            const parts = id.split(":");
+            const base64Str = parts[1];
+            searchTitle = base64Str ? fromBase64Safe(base64Str) : "Unknown";
             let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim();
             const malData = await getJikanMeta(cleanQuery);
             if (malData) {
@@ -302,10 +303,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id, config }) => {
-    const parts = id.split(":");
-    const baseId = parts[0]; 
-
-    if (!baseId.startsWith("yomi_al_") && !baseId.startsWith("yomi_sk_") && baseId !== "kitsu" && !baseId.startsWith("tt")) return Promise.resolve({ streams: [] });
+    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:") && !id.startsWith("kitsu:") && !id.startsWith("tt")) return Promise.resolve({ streams: [] });
     console.log("[Stream Request] Processing request for ID: " + id);
 
     try {
@@ -313,37 +311,31 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         if (!userConfig.rdKey && !userConfig.tbKey) return { streams: [] };
 
         let searchTitle = "", requestedEp = 1, aniListIdForFallback = null;
+        
+        const parts = id.split(":");
 
-        if (baseId.startsWith("yomi_al_")) {
-            let payload = baseId.replace("yomi_al_", "");
-            let subParts = payload.split("_");
-            aniListIdForFallback = subParts[0];
-            
-            if (subParts.length > 1 && subParts[1]) {
-                searchTitle = sanitizeSearchQuery(fromBase64Safe(subParts[1]));
-            } else {
-                if (aniListIdForFallback) {
-                    const freshMeta = await getAnimeMeta(aniListIdForFallback);
-                    if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
-                }
+        if (id.startsWith("anilist:")) {
+            aniListIdForFallback = parts[1];
+            if (aniListIdForFallback) {
+                const freshMeta = await getAnimeMeta(aniListIdForFallback);
+                if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
             }
-            requestedEp = parseInt(parts[2], 10) || 1; // [ID, Staffel, Folge]
-        } else if (baseId.startsWith("yomi_sk_")) {
-            let payload = baseId.replace("yomi_sk_", "");
-            searchTitle = payload ? sanitizeSearchQuery(fromBase64Safe(payload)) : "";
-            requestedEp = parseInt(parts[2], 10) || 1;
-        } else if (baseId === "kitsu") {
+            requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+        } else if (id.startsWith("sukebei:")) {
+            const base64Str = parts[1];
+            searchTitle = base64Str ? sanitizeSearchQuery(fromBase64Safe(base64Str)) : "";
+            requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+        } else if (id.startsWith("kitsu:")) {
             try {
-                // Kitsu IDs kommen als kitsu:12345:1
-                const kitsuId = "kitsu:" + parts[1];
+                const kitsuId = parts[0] + ":" + parts[1];
                 const res = await axios.get(`https://anime-kitsu.strem.fun/meta/anime/${kitsuId}.json`, { timeout: 4000 });
                 searchTitle = sanitizeSearchQuery(res.data?.meta?.name || "");
             } catch (e) {
                 console.error("[Stream] Kitsu Fetch Error:", e.message);
             }
-            requestedEp = parseInt(parts[2], 10) || 1;
-        } else if (baseId.startsWith("tt")) {
-            const imdbId = baseId;
+            requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+        } else if (id.startsWith("tt")) {
+            const imdbId = parts[0];
             let name = "";
             try {
                 let res = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${imdbId}.json`, { timeout: 4000 });
@@ -358,11 +350,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 } catch(e) {}
             }
             searchTitle = sanitizeSearchQuery(name || "");
-            if (parts.length > 2) {
-                requestedEp = parseInt(parts[2], 10) || 1;
-            } else {
-                requestedEp = 1;
-            }
+            requestedEp = parts.length > 1 ? parseInt(parts[parts.length - 1], 10) : 1;
         }
 
         if (!searchTitle) return { streams: [] };
@@ -374,7 +362,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             console.log("[Stream] Engaging Universal Fallback Engine...");
             let fallbackMeta = null;
             if (aniListIdForFallback) fallbackMeta = await getAnimeMeta(aniListIdForFallback);
-            else if (baseId.startsWith("yomi_sk_")) fallbackMeta = await getJikanMeta(searchTitle.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim());
+            else if (id.startsWith("sukebei:")) fallbackMeta = await getJikanMeta(searchTitle.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim());
             
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
