@@ -5,7 +5,7 @@
 const { addonBuilder } = require("stremio-addon-sdk");
 const axios = require("axios");
 
-const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime, getJikanMeta, fetchEpisodeDetails } = require("./lib/anilist");
+const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime, getLatestAdultAnime, getJikanMeta, fetchEpisodeDetails } = require("./lib/anilist");
 const { searchSukebeiForHentai, cleanTorrentTitle } = require("./lib/sukebei");
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require("./lib/debrid");
 const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile, verifyTitleMatch } = require("./lib/parser");
@@ -31,7 +31,7 @@ function fromBase64Safe(str) {
 //===============
 const manifest = {
     id: "org.community.yomi",
-    version: "6.8.8", 
+    version: "6.8.9", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -50,6 +50,7 @@ const manifest = {
         }
     ],
     catalogs: [
+        { id: "sukebei_latest", type: "series", name: "Yomi Latest Releases" },
         { id: "sukebei_trending", type: "series", name: "Yomi Trending" },
         { id: "sukebei_top", type: "series", name: "Yomi Top Rated" },
         { id: "sukebei_search", type: "series", name: "Yomi Search", extra: [{ name: "search", isRequired: true }] }
@@ -170,6 +171,13 @@ function generateDynamicPoster(title) {
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     console.log("[Catalog Request] Fetching catalog: " + id);
     const userConfig = parseConfig(config);
+    
+    if (id === "sukebei_latest") {
+        if (userConfig.showLatest === false) return { metas: [] };
+        const metas = await getLatestAdultAnime();
+        return { metas: metas.map(m => ({ ...m, type: type === "anime" ? "anime" : "series" })), cacheMaxAge: 14400 };
+    }
+    
     if (id === "sukebei_trending") {
         if (userConfig.showTrending === false) return { metas: [] };
         const metas = await getTrendingAdultAnime();
