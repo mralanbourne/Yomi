@@ -31,7 +31,7 @@ function fromBase64Safe(str) {
 //===============
 const manifest = {
     id: "org.community.yomi",
-    version: "6.9.2", 
+    version: "6.9.3", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -174,7 +174,6 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
         const metas = await getLatestAdultAnime();
         return { metas: metas.map(m => ({ ...m, type: type === "anime" ? "anime" : "series" })), cacheMaxAge: 14400 };
     }
-    
     if (id === "sukebei_trending") {
         if (userConfig.showTrending === false) return { metas: [] };
         const metas = await getTrendingAdultAnime();
@@ -229,13 +228,13 @@ builder.defineMetaHandler(async ({ type, id }) => {
         if (id.startsWith("anilist:")) {
             const parts = id.split(":");
             let aniListId = parts[1];
-            
+            if (isNaN(aniListId)) aniListId = parts.find(p => !isNaN(p) && p.length > 0) || parts[1];
             const rawMeta = await getAnimeMeta(aniListId);
             if (rawMeta) {
                 searchTitle = rawMeta.name;
                 meta = { ...rawMeta }; 
             } else {
-                searchTitle = "Unknown Anime";
+                searchTitle = (parts.length > 2 && parts[2]) ? fromBase64Safe(parts[2]) : "Unknown Anime";
                 meta = { id: id, type: "series", name: searchTitle, poster: generateDynamicPoster(searchTitle), baseTime: Date.now(), epMeta: {} };
             }
         } else if (id.startsWith("sukebei:")) {
@@ -315,16 +314,19 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         const parts = id.split(":");
 
         if (id.startsWith("anilist:")) {
-            aniListIdForFallback = parts[1];
-            if (aniListIdForFallback) {
-                const freshMeta = await getAnimeMeta(aniListIdForFallback);
-                if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
+            aniListIdForFallback = isNaN(parts[1]) ? parts.find(p => !isNaN(p) && p.length > 0) : parts[1];
+            if (parts.length > 2 && parts[2] && isNaN(parts[2])) {
+                searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[2]));
+            } else {
+                if (aniListIdForFallback) {
+                    const freshMeta = await getAnimeMeta(aniListIdForFallback);
+                    if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
+                }
             }
-            requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
         } else if (id.startsWith("sukebei:")) {
-            const base64Str = parts[1];
-            searchTitle = base64Str ? sanitizeSearchQuery(fromBase64Safe(base64Str)) : "";
-            requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+            searchTitle = parts[1] ? sanitizeSearchQuery(fromBase64Safe(parts[1])) : "";
+            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
         } else if (id.startsWith("kitsu:")) {
             try {
                 const kitsuId = parts[0] + ":" + parts[1];
@@ -333,7 +335,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             } catch (e) {
                 console.error("[Stream] Kitsu Fetch Error:", e.message);
             }
-            requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
         } else if (id.startsWith("tt")) {
             const imdbId = parts[0];
             let name = "";
@@ -350,7 +352,11 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 } catch(e) {}
             }
             searchTitle = sanitizeSearchQuery(name || "");
-            requestedEp = parts.length > 1 ? parseInt(parts[parts.length - 1], 10) : 1;
+            if (parts.length > 2) {
+                requestedEp = parseInt(parts[2], 10) || 1;
+            } else {
+                requestedEp = 1;
+            }
         }
 
         if (!searchTitle) return { streams: [] };
