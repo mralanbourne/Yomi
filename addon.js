@@ -25,7 +25,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "6.9.4", 
+    version: "6.9.5", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -220,7 +220,6 @@ builder.defineMetaHandler(async ({ type, id }) => {
             if (rawMeta) {
                 searchTitle = rawMeta.name;
                 meta = { ...rawMeta }; 
-                meta.id = id; 
             } else {
                 meta = { id: id, type: "series", name: "Unknown", poster: generateDynamicPoster("Unknown"), baseTime: Date.now(), epMeta: {} };
             }
@@ -256,6 +255,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
         const baseTime = meta.baseTime || Date.now();
         const epMeta = meta.epMeta || {};
         const nextAiring = meta.nextAiringEpisode;
+        
         for (let i = 1; i <= epCount; i++) {
             const epData = epMeta[i] || {};
             const jData = jikanEps[i] || {};
@@ -266,8 +266,15 @@ builder.defineMetaHandler(async ({ type, id }) => {
                 const weeksBehind = nextAiring.episode - i;
                 finalDate = new Date((nextAiring.airingAt * 1000) - (weeksBehind * 7 * 24 * 60 * 60 * 1000)).toISOString();
             } else { finalDate = new Date(baseTime + (i - 1) * 7 * 24 * 60 * 60 * 1000).toISOString(); }
-
-            videos.push({ id: meta.id + ":1:" + i, title: finalTitle, season: 1, episode: i, released: finalDate, thumbnail: epData.thumbnail || episodeThumbnail });
+            
+            videos.push({ 
+                id: meta.id + "@" + i, 
+                title: finalTitle, 
+                season: 1, 
+                episode: i, 
+                released: finalDate, 
+                thumbnail: epData.thumbnail || episodeThumbnail 
+            });
         }
         meta.videos = videos;
         return { meta, cacheMaxAge: 604800 };
@@ -283,29 +290,46 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         if (!userConfig.rdKey && !userConfig.tbKey) return { streams: [] };
         let searchTitle = "", requestedEp = 1, aniListIdForFallback = null;
         const parts = id.split(":");
+        const prefix = parts[0];
 
-        if (id.startsWith("anilist:")) {
-            aniListIdForFallback = parts[1];
+        if (prefix === "anilist") {
+            let payload = parts[1];
             
-            if (parts.length > 2 && isNaN(parts[2]) && parts[2].length > 5) {
-                searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[2]));
+
+            if (payload.includes("@")) {
+                let subParts = payload.split("@");
+                aniListIdForFallback = subParts[0];
+                requestedEp = parseInt(subParts[1], 10);
+            } else if (parts.length > 2) {
+
+                aniListIdForFallback = payload;
+                requestedEp = parseInt(parts[parts.length - 1], 10);
             } else {
-                if (aniListIdForFallback) {
-                    const freshMeta = await getAnimeMeta(aniListIdForFallback);
-                    if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
-                }
+                aniListIdForFallback = payload;
+                requestedEp = 1;
             }
-            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
-        } else if (id.startsWith("sukebei:")) {
-            searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[1]));
-            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
-        } else if (id.startsWith("kitsu:")) {
+
+            if (aniListIdForFallback) {
+                const freshMeta = await getAnimeMeta(aniListIdForFallback);
+                if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
+            }
+        } else if (prefix === "sukebei") {
+            let payload = parts[1];
+            if (payload.includes("@")) {
+                let subParts = payload.split("@");
+                searchTitle = sanitizeSearchQuery(fromBase64Safe(subParts[0]));
+                requestedEp = parseInt(subParts[1], 10);
+            } else {
+                searchTitle = sanitizeSearchQuery(fromBase64Safe(payload));
+                requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+            }
+        } else if (prefix === "kitsu") {
             try {
                 const res = await axios.get(`https://anime-kitsu.strem.fun/meta/anime/${parts[0] + ":" + parts[1]}.json`, { timeout: 4000 });
                 searchTitle = sanitizeSearchQuery(res.data?.meta?.name || "");
             } catch (e) {}
-            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
-        } else if (id.startsWith("tt")) {
+            requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+        } else if (prefix === "tt") {
             let res = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${parts[0]}.json`, { timeout: 4000 }).catch(() => null);
             searchTitle = sanitizeSearchQuery(res?.data?.meta?.name || "");
             requestedEp = parts.length > 2 ? parseInt(parts[2], 10) : 1;
