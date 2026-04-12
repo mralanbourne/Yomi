@@ -25,7 +25,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "6.9.5", 
+    version: "6.9.6", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -43,7 +43,6 @@ const manifest = {
             idPrefixes: ["anilist:", "sukebei:", "kitsu:", "tt"]
         }
     ],
-
     catalogs: [
         { id: "sukebei_latest", type: "anime", name: "Yomi Latest Releases" },
         { id: "sukebei_trending", type: "anime", name: "Yomi Trending" },
@@ -221,6 +220,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
             if (rawMeta) {
                 searchTitle = rawMeta.name;
                 meta = { ...rawMeta }; 
+                meta.id = id; 
             } else {
                 meta = { id: id, type: "anime", name: "Unknown", poster: generateDynamicPoster("Unknown"), baseTime: Date.now(), epMeta: {} };
             }
@@ -270,7 +270,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
                 finalDate = new Date((nextAiring.airingAt * 1000) - (weeksBehind * 7 * 24 * 60 * 60 * 1000)).toISOString();
             } else { finalDate = new Date(baseTime + (i - 1) * 7 * 24 * 60 * 60 * 1000).toISOString(); }
             
-            videos.push({ id: meta.id + "-" + i, title: finalTitle, season: 1, episode: i, released: finalDate, thumbnail: epData.thumbnail || episodeThumbnail });
+            videos.push({ id: meta.id + ":" + 1 + ":" + i, title: finalTitle, season: 1, episode: i, released: finalDate, thumbnail: epData.thumbnail || episodeThumbnail });
         }
         meta.videos = videos;
         return { meta, cacheMaxAge: 604800 };
@@ -289,32 +289,20 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         const parts = id.split(":");
 
         if (id.startsWith("anilist:")) {
-            let payload = parts[1];
-            
-            if (payload.includes("-")) {
-                let subParts = payload.split("-");
-                aniListIdForFallback = subParts[0];
-                requestedEp = parseInt(subParts[1], 10) || 1;
+            aniListIdForFallback = parts[1];
+            if (parts.length > 2 && isNaN(parts[2]) && parts[2].length > 5) {
+                searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[2]));
             } else {
-                aniListIdForFallback = payload;
-
-                requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1; 
+                if (aniListIdForFallback) {
+                    const freshMeta = await getAnimeMeta(aniListIdForFallback);
+                    if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
+                }
             }
-
-            if (aniListIdForFallback) {
-                const freshMeta = await getAnimeMeta(aniListIdForFallback);
-                if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
-            }
+            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
         } else if (id.startsWith("sukebei:")) {
             let payload = parts[1];
-            if (payload.includes("-")) {
-                let subParts = payload.split("-");
-                searchTitle = sanitizeSearchQuery(fromBase64Safe(subParts[0]));
-                requestedEp = parseInt(subParts[1], 10) || 1;
-            } else {
-                searchTitle = sanitizeSearchQuery(fromBase64Safe(payload));
-                requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
-            }
+            searchTitle = sanitizeSearchQuery(fromBase64Safe(payload));
+            requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
         } else if (id.startsWith("kitsu:")) {
             try {
                 const res = await axios.get(`https://anime-kitsu.strem.fun/meta/anime/${parts[0] + ":" + parts[1]}.json`, { timeout: 4000 });
@@ -332,11 +320,34 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         let torrents = await searchSukebeiForHentai(searchTitle);
         
         if (!torrents.length) {
+            console.log("[Stream] Engaging Universal Fallback Engine...");
             let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
                 if (fallbackMeta.altName && fallbackMeta.altName.length > 2) fallbackTitles.add(fallbackMeta.altName);
                 if (fallbackMeta.synonyms) fallbackMeta.synonyms.forEach(syn => { if (/^[a-zA-Z0-9\s\-_!:]+$/.test(syn)) fallbackTitles.add(syn); });
+                
+                const primaryWords = searchTitle.split(/\s+/);
+                
+                if (primaryWords.length >= 2) fallbackTitles.add(primaryWords.slice(0, 2).join(" "));
+                if (primaryWords.length > 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
+                if (primaryWords.length > 4) fallbackTitles.add(primaryWords.slice(0, 4).join(" "));
+                
+                if (primaryWords.length > 1) {
+                    fallbackTitles.add(primaryWords.slice(0, -1).join(" "));
+                }
+
+                if (primaryWords.length > 1 && primaryWords[0].length >= 4) {
+                    fallbackTitles.add(primaryWords[0]);
+                }
+
+                if (fallbackMeta.altName) {
+                    const altWords = fallbackMeta.altName.split(/\s+/);
+                    if (altWords.length > 3) fallbackTitles.add(altWords.slice(0, 3).join(" "));
+                    if (altWords.length > 1) fallbackTitles.add(altWords.slice(0, -1).join(" "));
+                    if (altWords.length > 1 && altWords[0].length >= 4) fallbackTitles.add(altWords[0]);
+                }
+
                 for (const altTitle of fallbackTitles) {
                     validSearchTitles.push(altTitle);
                     torrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
@@ -382,7 +393,30 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         });
 
-        return { streams: streams.sort((a, b) => { if (a._prog > b._prog) return -1; if (a._isCached !== b._isCached) return b._isCached ? 1 : -1; if (a._lang !== b._lang) { const sA = userLangs.indexOf(a._lang); const sB = userLangs.indexOf(b._lang); if (sA !== -1 && sB !== -1) return sA - sB; if (sA !== -1) return -1; if (sB !== -1) return 1; } return b._bytes - a._bytes; }), cacheMaxAge: 3600 };
+
+        const searchWords = searchTitle.toLowerCase().split(/\s+/);
+
+        return { streams: streams.sort((a, b) => { 
+            const aText = a.description.toLowerCase();
+            const bText = b.description.toLowerCase();
+            const aExact = searchWords.every(w => aText.includes(w)) ? 1 : 0;
+            const bExact = searchWords.every(w => bText.includes(w)) ? 1 : 0;
+            if (aExact !== bExact) return bExact - aExact;
+
+            if (a._prog > b._prog) return -1; 
+            
+            if (a._isCached !== b._isCached) return b._isCached ? 1 : -1; 
+            
+            if (a._lang !== b._lang) { 
+                const sA = userLangs.indexOf(a._lang); 
+                const sB = userLangs.indexOf(b._lang); 
+                if (sA !== -1 && sB !== -1) return sA - sB; 
+                if (sA !== -1) return -1; 
+                if (sB !== -1) return 1; 
+            } 
+            
+            return b._bytes - a._bytes; 
+        }), cacheMaxAge: 3600 };
     } catch (err) { return { streams: [] }; }
 });
 
