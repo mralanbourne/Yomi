@@ -25,7 +25,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "6.9.3", 
+    version: "6.9.4", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -220,6 +220,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
             if (rawMeta) {
                 searchTitle = rawMeta.name;
                 meta = { ...rawMeta }; 
+                meta.id = id; 
             } else {
                 meta = { id: id, type: "series", name: "Unknown", poster: generateDynamicPoster("Unknown"), baseTime: Date.now(), epMeta: {} };
             }
@@ -265,6 +266,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
                 const weeksBehind = nextAiring.episode - i;
                 finalDate = new Date((nextAiring.airingAt * 1000) - (weeksBehind * 7 * 24 * 60 * 60 * 1000)).toISOString();
             } else { finalDate = new Date(baseTime + (i - 1) * 7 * 24 * 60 * 60 * 1000).toISOString(); }
+
             videos.push({ id: meta.id + ":1:" + i, title: finalTitle, season: 1, episode: i, released: finalDate, thumbnail: epData.thumbnail || episodeThumbnail });
         }
         meta.videos = videos;
@@ -283,11 +285,16 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         const parts = id.split(":");
 
         if (id.startsWith("anilist:")) {
-            // ID ist jetzt sauber (anilist:ID)
             aniListIdForFallback = parts[1];
-            // FIX: Hole Titel dynamisch, um Split-Error in Stremio zu verhindern
-            const meta = await getAnimeMeta(aniListIdForFallback);
-            if (meta) searchTitle = sanitizeSearchQuery(meta.name);
+            
+            if (parts.length > 2 && isNaN(parts[2]) && parts[2].length > 5) {
+                searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[2]));
+            } else {
+                if (aniListIdForFallback) {
+                    const freshMeta = await getAnimeMeta(aniListIdForFallback);
+                    if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
+                }
+            }
             requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
         } else if (id.startsWith("sukebei:")) {
             searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[1]));
