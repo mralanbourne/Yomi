@@ -1,13 +1,16 @@
-FROM node:18-alpine
-
-WORKDIR /app
-COPY package*.json ./
-RUN npm install --omit=dev
-COPY . .
-
-# GITHUB LIMIT BYPASS (DOCKER FETCH)
-RUN wget -O static/waiting.mp4 "https://github.com/mralanbourne/Yomi/releases/download/video/waiting.mp4"
-RUN wget -O static/archive.mp4 "https://github.com/mralanbourne/Yomi/releases/download/video/archive.mp4"
-EXPOSE 7000
-
-CMD ["npm", "start"]
+  yomi-scraper:
+    image: "ghcr.io/mralanbourne/yomi:latest"
+    container_name: "stremio-yomi"
+    restart: "unless-stopped"
+    env_file:
+      - ".env"
+    environment:
+      - "NODE_ENV=production"
+      - "PORT=7000"
+    networks:
+      - "stremio-network"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
