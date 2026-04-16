@@ -95,7 +95,7 @@ services:
 ```yaml
     BASE_URL: REQUIRED. The public URL of your deployment (e.g., https://www.google.com/url?sa=E&source=gmail&q=https://yomi.ruka.pw).
 
-    ROOT_TORBOX_KEY: REQUIRED. Master Torbox API Key for backend cache approximations.
+    ROOT_TORBOX_KEY: Optional. Master Torbox API Key utilized for backend cache approximations cause RD is restrictive with their API.
 
     PORT: Optional. Defaults to 7000.
 
