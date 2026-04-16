@@ -5,24 +5,24 @@
 <h1 align="center">YOMI: Your Forbidden Gateway</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-6.9.0-e91e63.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/version-7.0.0-e91e63.svg?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Stremio-Addon-8a5a9e?style=for-the-badge&logo=stremio" alt="Stremio Addon">
   <img src="https://img.shields.io/badge/Status-Online-success?style=for-the-badge" alt="Status Online">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License MIT">
-  <img src="https://img.shields.io/badge/docker-ready-2496ED.svg?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Ready">
+  <img src="https://img.shields.io/badge/Infrastructure-VPS_Ready-2496ED?style=for-the-badge&logo=docker" alt="VPS Ready">
 </p>
 
 <p align="center">
   <strong>The definitive high-performance bridge between Sukebei and Stremio. Access the largest library of uncensored adult anime & Hentai via Real-Debrid or Torbox with advanced episode parsing, a strict 3-phase sorting engine, subtitle injection, and zero server-side tracking.</strong><br />
-  🍏 Fully Compatible with Stremio Web (Linux / iOS / iPadOS) & AIOStreams 🖤
+  <strong>🍏 Fully Compatible with Stremio Web (Linux / iOS / iPadOS) & AIOStreams 🖤</strong>
 </p>
 
 <div align="center">
   <h3>🌐 Community Instance</h3>
-  <a href="https://yomi.koyeb.app">yomi.koyeb.app</a>
+  <a href="https://yomi.ruka.pw">yomi.ruka.pw</a>
   <br />
   <br />
-  <a href="https://yomi.koyeb.app">
+  <a href="https://yomi.ruka.pw">
     <img src="https://img.shields.io/badge/INSTALL_NOW-CLICK_HERE-e91e63?style=for-the-badge&logo=rocket" alt="Install Button" height="55">
   </a>
 </div>
@@ -47,7 +47,7 @@
 > * **100% Open Source:** Your security is paramount. Verify the code yourself. Everything is public.
 
 ### 🌙 Quick Start
-1. Open the [Community Instance](https://yomi.koyeb.app) and enter your Real-Debrid and / or Torbox API Key.
+1. Open the [Community Instance](https://yomi.ruka.pw) and enter your Real-Debrid and / or Torbox API Key.
 2. Select your **Preferred Languages** (e.g., GER, JPN, ENG) from the setup grid. Order matters!
 3. Choose your catalog preferences (Trending / Top Rated).
 4. Click "Install" or copy your manifest url to add your personalized configuration to Stremio.
@@ -66,42 +66,46 @@
 ---
 
 <details>
-<summary>💻 <strong>Self-Hosting Instructions (Developers)</strong></summary>
+<summary>💻 <strong>Self-Hosting Instructions (VPS & Docker)</strong></summary>
 
 ### Hosting your own Gateway
-Yomi is optimized for PaaS environments like Koyeb. It requires no persistent storage or database.
+Yomi is optimized for dedicated VPS hosting using Docker. It requires no persistent storage or database.
 
-#### 1. Prerequisites
-* **Node.js:** v18 or higher.
-* **Docker** (Recommended).
+#### 1. Deployment (Docker Compose)
+The recommended way to host Yomi is via `docker-compose`. This ensures easy updates and log management.
 
-#### 2. Deployment (Docker)
-**Clone the Repo:**
-```bash
-git clone [https://github.com/mralanbourne/Yomi.git](https://github.com/mralanbourne/Yomi.git)
-cd Yomi
+```yaml
+services:
+  yomi-scraper:
+    image: ghcr.io/mralanbourne/yomi:latest
+    container_name: stremio-yomi
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=7000
+      - BASE_URL=[https://yomi.ruka.pw](https://yomi.ruka.pw)
+      - ROOT_TORBOX_KEY=your_torbox_api_key
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 ```
-Build and Run:
-```bash
+#### 2. Environment Variables:
+```yaml
+    BASE_URL: REQUIRED. The public URL of your deployment (e.g., https://www.google.com/url?sa=E&source=gmail&q=https://yomi.ruka.pw).
 
-docker build -t yomi-addon .
-docker run -p 7000:7000 -e BASE_URL="https://your-domain.com" yomi-addon
+    ROOT_TORBOX_KEY: REQUIRED. Master Torbox API Key for backend cache approximations.
+
+    PORT: Optional. Defaults to 7000.
+
+    SUKEBEI_DOMAIN: Optional. Specify another custom Sukebei mirror.
+
+    PROXY_URL: Optional. Pass traffic through a secure proxy to bypass ISP blocks.
 ```
-#### 3. Environment Variables:
+#### 3. Continuous Deployment
 
-   **BASE_URL: REQUIRED.** The public URL of your deployment (e.g., https://yomi.yourdomain.com). Yomi requires this to correctly construct the Subtitle-Proxy and Stream-Resolver links. If missing or incorrect, streams will fail to load!
-
-  **ROOT_TORBOX_KEY: REQUIRED (if supporting Torbox).** Master Torbox API Key utilized for backend operations and fallback Cache status requests NOTHING ELSE. provides RD Users with an approximation if their Content is on RD cause the normal RD Request is heavily rate limited which is why we ask Torbox. in 99% of cases Stuff that is on TB is on RD.
-
-  **PORT: Optional.** Defaults to 7000.
-
-  **SUKEBEI_DOMAIN: Optional.** Specify another custom Sukebei mirror (e.g., https://sukebei.nyaa.iss.one) if the main domain is blocked.
-
-  **PROXY_URL: Optional.** Pass traffic through a secure proxy (e.g., http://user:pass@host:port) to bypass aggressive Cloudflare challenges or ISP blocks.
-
-#### 4. Customizing the "Waiting" Video
-
-When users click on an uncached stream, Yomi routes the Stremio player to a fallback loading video while Debrid downloads the file. The repository includes the default waiting.mp4 file located in the public/ directory. If you want to use your own custom loading screen, simply replace the waiting.mp4 file before building your Docker image.
+Yomi supports automated updates via GitHub Actions and Watchtower. Simply push to your repository, and your VPS will automatically pull the latest image from GHCR.
 
 </details>
 
