@@ -1,23 +1,28 @@
-# YOMI DOCKER COMPOSE
-
 version: "3.8"
 
 services:
   yomi-addon:
-    build: .
-    container_name: yomi_gateway
-    restart: always
+    image: "ghcr.io/mralanbourne/yomi:latest"
+    container_name: "yomi_gateway"
+    restart: "unless-stopped"
     ports:
       - "7000:7000"
+
+    env_file:
+      - ".env"
     environment:
-      - PORT=7000
-    volumes:
-      - ./public:/app/public
-      - ./static:/app/static
-      - ./.env:/app/.env
+      - "PORT=7000"
+      - "NODE_ENV=production"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
-      - yomi-network
+      - "stremio-network"
 
 networks:
-  yomi-network:
-    driver: bridge
+  stremio-network:
+    name: "stremio-internal-net"
+    driver: "bridge"
