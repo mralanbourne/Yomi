@@ -63,9 +63,6 @@ function extractTags(title) {
     return { res };
 }
 
-//===============
-// LANGUAGE MAPPING
-//===============
 const LANG_REGEX = {
     "GER": /\b(ger|deu|german|deutsch|de-de)\b|(?:^|\[|\()(de)(?:\]|\)|$)/i,
     "FRE": /\b(fre|fra|french|vostfr|vf|fr-fr)\b|(?:^|\[|\()(fr)(?:\]|\)|$)/i,
@@ -98,8 +95,17 @@ function extractLanguage(title, userLangs = []) {
     return "JPN"; 
 }
 
+function sanitizeSearchQuery(title) { 
+    if (!title) return "";
+    return title.replace(/\(.*?\)/g, "")
+                .replace(/\[.*?\]/g, "")
+                .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]"'<>?+|\\・、。「」『』【】［］（）〈〉≪≫《》〔〕…—～〜♥♡★☆♪]/g, " ")
+                .replace(/\s{2,}/g, " ")
+                .trim(); 
+}
+
 const manifest = {
-    "id": "org.community.yomi", "version": "8.2.1", "name": "Yomi", "logo": BASE_URL + "/yomi.png",
+    "id": "org.community.yomi", "version": "8.2.2", "name": "Yomi", "logo": BASE_URL + "/yomi.png",
     "description": "The ultimate Debrid-powered Gateway for Sukebei. Parallel Search for Adult Content.",
     "types": ["anime", "movie", "series"],
     "resources": [
@@ -117,26 +123,88 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+//===============
+// RESTORED CATALOG HANDLER
+//===============
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     try {
         if (id === "yomi_search" && extra.search) {
+            const sukebeiPromise = searchSukebei(extra.search).catch(() => []);
+            const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([]), 3500));
+
+            const [anilistRes, cinemetaRes, sukebeiRes] = await Promise.all([
+                searchAnime(extra.search).catch(() => []),
+                axios.get(`https://v3-cinemeta.strem.io/catalog/${type}/top/search=${encodeURIComponent(extra.search)}.json`, { timeout: 4000 }).then(res => res.data.metas || []).catch(() => []),
+                Promise.race([sukebeiPromise, timeoutPromise])
+            ]);
+
             const results = [];
-            results.push({
-                "id": `yomi_raw:${type}:${toBase64Safe(extra.search)}`,
-                "type": type,
-                "name": extra.search + " (RAW SEARCH)",
-                "poster": `https://dummyimage.com/600x900/1a1a1a/e53935.png?text=${encodeURIComponent(extra.search)}\nRaw+Search`,
-                "background": `https://dummyimage.com/1920x1080/1a1a1a/e53935.png?text=${encodeURIComponent(extra.search)}`,
-                "description": `Search Sukebei directly for "${extra.search}".`
+            const seenIds = new Set();
+
+            anilistRes.filter(m => m.type === type).forEach(m => {
+                results.push(m);
+                seenIds.add(m.id);
             });
+
+            cinemetaRes.forEach(m => {
+                if (!seenIds.has(m.id)) {
+                    results.push(m);
+                    seenIds.add(m.id);
+                }
+            });
+
+            if (results.length < 2 && sukebeiRes.length > 0) {
+                results.push({
+                    "id": `yomi_raw:${type}:${toBase64Safe(extra.search)}`,
+                    "type": type,
+                    "name": extra.search + " (RAW SEARCH)",
+                    "poster": `https://dummyimage.com/600x900/1a1a1a/e53935.png?text=${encodeURIComponent(extra.search)}\nRaw+Search`,
+                    "background": `https://dummyimage.com/1920x1080/1a1a1a/e53935.png?text=${encodeURIComponent(extra.search)}`,
+                    "description": `Found ${sukebeiRes.length} raw torrents on Sukebei.`
+                });
+            }
+
+            if (results.length === 0) {
+                results.push({
+                    "id": `yomi_raw:${type}:${toBase64Safe(extra.search)}`,
+                    "type": type,
+                    "name": extra.search + " (RAW SEARCH)",
+                    "poster": `https://dummyimage.com/600x900/1a1a1a/e53935.png?text=${encodeURIComponent(extra.search)}\nRaw+Search`,
+                    "background": `https://dummyimage.com/1920x1080/1a1a1a/e53935.png?text=${encodeURIComponent(extra.search)}`,
+                    "description": `Search Sukebei directly for "${extra.search}".`
+                });
+            }
+
             return { "metas": results, "cacheMaxAge": 86400 };
         }
         return { "metas": [] };
     } catch (e) { return { "metas": [] }; }
 });
 
+//===============
+// RESTORED META HANDLER
+//===============
 builder.defineMetaHandler(async ({ type, id }) => {
     try {
+        if (id.startsWith("tt")) {
+            const imdbId = id.split(":")[0];
+            const reqType = type || "movie";
+            let metaData = null;
+            try {
+                const res = await axios.get(`https://v3-cinemeta.strem.io/meta/${reqType}/${imdbId}.json`, { timeout: 4000 });
+                metaData = res.data?.meta;
+            } catch (e) {}
+
+            if (!metaData) {
+                metaData = {
+                    id: imdbId, type: reqType, name: "Unknown Title", 
+                    description: "Metadata could not be loaded. Streams may still be available.",
+                    poster: "https://dummyimage.com/600x900/1a1a1a/e53935.png?text=NO+META"
+                };
+            }
+            return { "meta": metaData, "cacheMaxAge": 604800 };
+        }
+
         if (id.startsWith("yomi_raw:")) {
             const parts = id.split(":");
             const mType = parts[1];
@@ -157,33 +225,123 @@ builder.defineMetaHandler(async ({ type, id }) => {
             }
             return { "meta": meta, "cacheMaxAge": 86400 };
         }
-        return { "meta": null };
+
+        if (!id.startsWith("anilist:")) return { "meta": null };
+        const aniListId = id.split(":")[1];
+        if (!aniListId || isNaN(aniListId)) return { "meta": null };
+        const meta = await getAnimeMeta(aniListId);
+        if (!meta) return { "meta": null };
+        
+        meta.id = id;
+
+        if (meta.type === "anime" || meta.type === "series") {
+            meta.type = "anime";
+            const epMeta = meta.epMeta || {};
+            const defaultThumb = meta.background || meta.poster || "https://dummyimage.com/600x337/1a1a1a/e53935.png?text=YOMI+EPISODE";
+            meta.videos = Array.from({ "length": meta.episodes || 12 }, (_, i) => {
+                const epNum = i + 1;
+                const epData = epMeta[epNum] || {};
+                return { "id": `${id}-${epNum}`, "title": epData.title || `Episode ${epNum}`, "season": 1, "episode": epNum, "thumbnail": epData.thumbnail || defaultThumb };
+            });
+        }
+        return { "meta": meta, "cacheMaxAge": 604800 };
     } catch (e) { return { "meta": null }; }
 });
 
+//===============
+// STREAM HANDLER (with Subtitle Injector)
+//===============
 builder.defineStreamHandler(async ({ type, id, config }) => {
     try {
-        if (!id.startsWith("yomi_raw:")) return { "streams": [] };
+        if (!id.startsWith("anilist:") && !id.startsWith("tt") && !id.startsWith("yomi_raw:")) return { "streams": [] };
 
         const userConfig = parseConfig(config);
         if (!userConfig.rdKey && !userConfig.tbKey) return { "streams": [] };
 
-        const parts = id.split(":");
-        let rawPayload = parts[2];
+        let aniListId = null;
         let searchTitleFallback = null;
         let requestedEp = 1;
         let expectedSeason = 1;
+        let isRawSearch = false;
 
-        if (rawPayload && rawPayload.includes("-")) {
-            let subParts = rawPayload.split("-");
-            searchTitleFallback = fromBase64Safe(subParts[0]);
-            requestedEp = parseInt(subParts[1], 10) || 1;
-        } else {
-            searchTitleFallback = fromBase64Safe(rawPayload);
+        const parts = id.split(":");
+
+        if (id.startsWith("yomi_raw:")) {
+            let rawPayload = parts[2];
+            if (rawPayload && rawPayload.includes("-")) {
+                let subParts = rawPayload.split("-");
+                searchTitleFallback = fromBase64Safe(subParts[0]);
+                requestedEp = parseInt(subParts[1], 10) || 1;
+            } else {
+                searchTitleFallback = fromBase64Safe(rawPayload);
+            }
+            isRawSearch = true;
+        } else if (id.startsWith("anilist:")) {
+            let payload = parts[1];
+            if (payload.includes("-")) {
+                let subParts = payload.split("-");
+                aniListId = subParts[0];
+                requestedEp = parseInt(subParts[1], 10) || 1;
+            } else {
+                aniListId = payload;
+                requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+            }
+        } else if (id.startsWith("tt")) {
+            if (parts.length > 2) {
+                expectedSeason = parseInt(parts[1], 10) || 1;
+                requestedEp = parseInt(parts[2], 10) || 1;
+            }
         }
 
-        const isMovie = type === "movie";
-        const torrents = await searchSukebei(searchTitleFallback);
+        const metaTasks = [];
+        if (id.startsWith("tt")) {
+            metaTasks.push((async () => {
+                const imdbId = parts[0];
+                let name = "";
+                try {
+                    let res = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${imdbId}.json`, { timeout: 4000 });
+                    name = res.data?.meta?.name;
+                } catch(e) {}
+                return { source: "cinemeta", name: name || "" };
+            })());
+        }
+        if (aniListId) {
+            metaTasks.push(getAnimeMeta(aniListId).then(meta => ({ "source": "anilist", "meta": meta })).catch(() => null));
+        }
+
+        const metaResults = await Promise.all(metaTasks);
+        let freshMeta = null;
+        metaResults.forEach(r => {
+            if (!r) return;
+            if (r.source === "cinemeta") searchTitleFallback = r.name;
+            if (r.source === "anilist") freshMeta = r.meta;
+        });
+
+        if (!freshMeta && !searchTitleFallback) return { "streams": [] };
+
+        const isMovie = type === "movie" || (freshMeta && freshMeta.format === "MOVIE");
+
+        const titleList = [];
+        if (searchTitleFallback) titleList.push(sanitizeSearchQuery(searchTitleFallback));
+        if (freshMeta) {
+            if (freshMeta.name) titleList.push(sanitizeSearchQuery(freshMeta.name));
+            if (freshMeta.altName) titleList.push(sanitizeSearchQuery(freshMeta.altName));
+        }
+
+        const uniqueTitles = [...new Set(titleList.filter(Boolean))];
+        let torrents = [];
+
+        for (const title of uniqueTitles) {
+            const t = await searchSukebei(title);
+            torrents = [...torrents, ...t];
+        }
+
+        // Deduplication
+        const uniqueTorrents = new Map();
+        torrents.forEach(t => {
+            if (!uniqueTorrents.has(t.hash)) uniqueTorrents.set(t.hash, t);
+        });
+        torrents = Array.from(uniqueTorrents.values());
 
         if (!torrents.length) return { "streams": [], "cacheMaxAge": 60 };
 
@@ -207,6 +365,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const streamLang = extractLanguage(t.title, userLangs);
             const flag = flags[streamLang] || "🇯🇵";
+
+            let isValidMatch = true;
 
             // ===============
             // REAL-DEBRID LOGIC (Inkl. Subtitles)
@@ -242,7 +402,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     });
                 }
 
-                if (isCached || isDownloading || true) {
+                if (isCached || isDownloading || isValidMatch) {
                     const streamPayload = {
                         "name": uiName + `\n🎥 ${res}`,
                         "description": `${flag} Sukebei | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${t.seeders || 0} Seeds`,
@@ -289,7 +449,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     });
                 }
 
-                if (isCached || isDownloading || true) {
+                if (isCached || isDownloading || isValidMatch) {
                     const streamPayload = {
                         "name": uiName + `\n🎥 ${res}`,
                         "description": `${flag} Sukebei | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${t.seeders || 0} Seeds`,
