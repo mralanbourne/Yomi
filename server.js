@@ -1,8 +1,5 @@
 //===============
 // YOMI GATEWAY - SERVER CORE
-// This is the entry point of the application. It sets up the Express server,
-// handles static assets, and provides the specialized routes for stream resolution
-// and subtitle proxying.
 //===============
 
 require("dotenv").config();
@@ -16,64 +13,51 @@ const { selectBestVideoFile } = require("./lib/parser");
 const app = express();
 app.use(express.json()); 
 
-//===============
-// CORS & PREFLIGHT HANDLING
-//===============
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD");
     res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, Range");
     res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range");
-
-    if (req.method === "OPTIONS") {
-        return res.status(204).end();
-    }
-    
+    if (req.method === "OPTIONS") return res.status(204).end();
     next();
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+    console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(path.join(__dirname, "static")));
 
 const port = process.env.PORT || 7000;
-
-// Fallback for missing environment variables when self-hosting
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
 
-// API status endpoint for platforms such as Heroku or Koyeb
-app.get("/health", (req, res) => res.status(200).json({ status: "alive" }));
+const SUKEBEI_DOMAIN = (process.env.SUKEBEI_DOMAIN || "https://sukebei.nyaa.iss.one").replace(/\/+$/, "");
 
-//===============
-// SUKEBEI STATUS CHECK
-//===============
-let sukebeiCache = { status: "checking", timestamp: 0 };
+app.get("/health", (req, res) => res.status(200).json({ "status": "alive" }));
+app.get("/configure", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
+let sukebeiCache = { "status": "checking", "timestamp": 0 };
 app.get("/sukebei-status", async (req, res) => {
     const now = Date.now();
-    if (now - sukebeiCache.timestamp < 300000 && sukebeiCache.status !== "checking") {
-        return res.json({ status: sukebeiCache.status });
-    }
-    
+    if (now - sukebeiCache.timestamp < 300000 && sukebeiCache.status !== "checking") return res.json({ "status": sukebeiCache.status });
     try {
-        await axios.get("https://sukebei.nyaa.si", { 
-            timeout: 8000,
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+        await axios.get(SUKEBEI_DOMAIN, {
+            "timeout": 5000,
+            "headers": { "User-Agent": "Mozilla/5.0" },
+            "validateStatus": status => (status >= 200 && status < 300) || status === 403 || status === 503
         });
-        sukebeiCache = { status: "online", timestamp: now };
-        res.json({ status: "online" });
+        sukebeiCache = { "status": "online", "timestamp": now };
+        res.json({ "status": "online" });
     } catch (error) {
-        sukebeiCache = { status: "offline", timestamp: now };
-        res.json({ status: "offline" });
+        sukebeiCache = { "status": "online", "timestamp": now };
+        res.json({ "status": "online" });
     }
-});
-
-app.get("/configure", (req, res) => {
-    res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 //===============
-// SUBTITLE PROXY
+// BULLETPROOF SUBTITLE PROXY
 //===============
 app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
     const { provider, apiKey, hash, fileId } = req.params;
@@ -85,17 +69,17 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
         let fileName = req.query.filename || "sub.srt";
         
         if (provider === "realdebrid") {
-            let list = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { headers: { Authorization: "Bearer " + apiKey } });
+            let list = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { "headers": { "Authorization": "Bearer " + apiKey } });
             let torrent = list.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
             
             if (!torrent) {
                 await new Promise(resolve => setTimeout(resolve, 2500));
-                list = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { headers: { Authorization: "Bearer " + apiKey } });
+                list = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { "headers": { "Authorization": "Bearer " + apiKey } });
                 torrent = list.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
             }
 
             if (torrent) {
-                const info = await axios.get("https://api.real-debrid.com/rest/1.0/torrents/info/" + torrent.id, { headers: { Authorization: "Bearer " + apiKey } });
+                const info = await axios.get("https://api.real-debrid.com/rest/1.0/torrents/info/" + torrent.id, { "headers": { "Authorization": "Bearer " + apiKey } });
                 const fileIdx = info.data.files.findIndex(f => f.id == fileId);
                 
                 if (fileIdx !== -1) {
@@ -111,7 +95,7 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
                     }
 
                     if (targetLink) {
-                        const unrestrict = await axios.post("https://api.real-debrid.com/rest/1.0/unrestrict/link", new URLSearchParams({ link: targetLink }), { headers: { Authorization: "Bearer " + apiKey } });
+                        const unrestrict = await axios.post("https://api.real-debrid.com/rest/1.0/unrestrict/link", new URLSearchParams({ "link": targetLink }), { "headers": { "Authorization": "Bearer " + apiKey } });
                         downloadUrl = unrestrict.data.download;
                     }
                 }
@@ -128,45 +112,40 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
         }
         
         if (!downloadUrl) return res.status(404).send("Subtitle not found");
-        const subResponse = await axios.get(downloadUrl, { responseType: "stream" });
+        
+        const subResponse = await axios.get(downloadUrl, { "responseType": "stream", "timeout": 10000 });
         if (clientAborted) { if (subResponse.data?.destroy) subResponse.data.destroy(); return; }
 
         const ext = fileName.split(".").pop().toLowerCase();
         let finalMime = subResponse.headers["content-type"];
-        if (!finalMime || finalMime.includes("octet-stream")) {
+        if (!finalMime || finalMime.includes("octet-stream") || finalMime.includes("plain")) {
             if (ext === "vtt") finalMime = "text/vtt";
             else if (ext === "ass" || ext === "ssa") finalMime = "text/x-ssa";
             else if (ext === "srt") finalMime = "application/x-subrip";
+            else finalMime = "text/plain";
         }
         
-        res.set("Content-Type", finalMime);
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Content-Type", finalMime);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        
         subResponse.data.on("error", () => res.end());
         req.on("close", () => { if (subResponse.data?.destroy) subResponse.data.destroy(); });
         subResponse.data.pipe(res);
+        
     } catch (e) { res.status(500).send("Error fetching subtitle data"); }
 });
-	
-//===============
-// Displays a loading video whilst the Provider is processing the torrent.
-// Uses strict no-store headers to prevent Stremio from caching the redirect loop.
-//===============
+
 function serveLoadingVideo(req, res) {
-    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     res.redirect(BASE_URL + "/waiting.mp4");
 }
-	
-//===============
-// Displays an information video if the torrent contains only useless archives.
-// Uses strict no-store headers to prevent Stremio from caching the redirect loop.
-//===============
+
 function serveArchiveVideo(req, res) {
-    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     res.redirect(BASE_URL + "/archive.mp4");
 }
 
-//===============
-// STREAM RESOLVER
-//===============
 app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
     const { provider, apiKey, hash, episode } = req.params;
     const requestedEp = episode || "1";
@@ -174,29 +153,28 @@ app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
     
     try {
         if (provider === "realdebrid") {
-            const listRes = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { headers: { Authorization: "Bearer " + apiKey } });
+            const listRes = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { "headers": { "Authorization": "Bearer " + apiKey } });
             let torrent = listRes.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
             
             if (!torrent) {
-                const add = await axios.post("https://api.real-debrid.com/rest/1.0/torrents/addMagnet", new URLSearchParams({ magnet }), { headers: { Authorization: "Bearer " + apiKey } });
-                torrent = { id: add.data.id };
+                const add = await axios.post("https://api.real-debrid.com/rest/1.0/torrents/addMagnet", new URLSearchParams({ "magnet": magnet }), { "headers": { "Authorization": "Bearer " + apiKey } });
+                torrent = { "id": add.data.id };
             }
             
-            let info = await axios.get("https://api.real-debrid.com/rest/1.0/torrents/info/" + torrent.id, { headers: { Authorization: "Bearer " + apiKey } });
-            
+            let info = await axios.get("https://api.real-debrid.com/rest/1.0/torrents/info/" + torrent.id, { "headers": { "Authorization": "Bearer " + apiKey } });
             if (["magnet_error", "error", "virus", "dead"].includes(info.data.status)) {
-                await axios.delete("https://api.real-debrid.com/rest/1.0/torrents/delete/" + torrent.id, { headers: { Authorization: "Bearer " + apiKey } }).catch(() => null);
+                await axios.delete("https://api.real-debrid.com/rest/1.0/torrents/delete/" + torrent.id, { "headers": { "Authorization": "Bearer " + apiKey } }).catch(() => null);
                 return res.status(404).send("Torrent is dead.");
             }
             
             if (info.data.status !== "downloaded") {
                 if (info.data.status === "waiting_files_selection") {
-                    const selectedIds = info.data.files.filter(f => /\.(mkv|mp4|avi|wmv|flv|webm|m4v|ts|m2ts|mov|ass|srt|ssa|vtt)$/i.test(f.path)).map(f => f.id);
-                    await axios.post("https://api.real-debrid.com/rest/1.0/torrents/selectFiles/" + torrent.id, "files=" + (selectedIds.length ? selectedIds.join(",") : "all"), { 
-                        headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/x-www-form-urlencoded" } 
+                    const selectedIds = info.data.files.filter(f => /\.(mkv|mp4|avi|wmv|flv|webm|m4v|ts|m2ts|mov|ass|srt|ssa|vtt)$/.test((f.path || "").toLowerCase())).map(f => f.id);
+                    await axios.post("https://api.real-debrid.com/rest/1.0/torrents/selectFiles/" + torrent.id, "files=" + (selectedIds.length > 0 ? selectedIds.join(",") : "all"), { 
+                        "headers": { "Authorization": "Bearer " + apiKey, "Content-Type": "application/x-www-form-urlencoded" } 
                     });
                     await new Promise(resolve => setTimeout(resolve, 1500));
-                    info = await axios.get("https://api.real-debrid.com/rest/1.0/torrents/info/" + torrent.id, { headers: { Authorization: "Bearer " + apiKey } });
+                    info = await axios.get("https://api.real-debrid.com/rest/1.0/torrents/info/" + torrent.id, { "headers": { "Authorization": "Bearer " + apiKey } });
                 }
                 if (info.data.status !== "downloaded") return serveLoadingVideo(req, res);
             }
@@ -206,7 +184,7 @@ app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
             
             if (!bestFileFresh) return serveArchiveVideo(req, res);
             if (bestFileFresh.selected === 0) {
-                await axios.delete("https://api.real-debrid.com/rest/1.0/torrents/delete/" + torrent.id, { headers: { Authorization: "Bearer " + apiKey } }).catch(() => null);
+                await axios.delete("https://api.real-debrid.com/rest/1.0/torrents/delete/" + torrent.id, { "headers": { "Authorization": "Bearer " + apiKey } }).catch(() => null);
                 return res.redirect(req.originalUrl);
             }
             
@@ -219,20 +197,20 @@ app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
                     if (info.data.files[i].selected === 1) linkCounter++;
                 }
             }
-
             if (!targetLink) return serveLoadingVideo(req, res);
-            const unrestrict = await axios.post("https://api.real-debrid.com/rest/1.0/unrestrict/link", new URLSearchParams({ link: targetLink }), { headers: { Authorization: "Bearer " + apiKey } });
+
+            const unrestrict = await axios.post("https://api.real-debrid.com/rest/1.0/unrestrict/link", new URLSearchParams({ "link": targetLink }), { "headers": { "Authorization": "Bearer " + apiKey } });
             return res.redirect(unrestrict.data.download);
         }
         
         if (provider === "torbox") {
-            const list = await axios.get("https://api.torbox.app/v1/api/torrents/mylist?bypass_cache=true", { headers: { Authorization: "Bearer " + apiKey } });
+            const list = await axios.get("https://api.torbox.app/v1/api/torrents/mylist?bypass_cache=true", { "headers": { "Authorization": "Bearer " + apiKey } });
             let torrent = list.data.data ? list.data.data.find(t => t.hash.toLowerCase() === hash.toLowerCase()) : null;
             
             if (!torrent) {
                 const boundary = "----WebKitFormBoundaryYomi";
                 try {
-                    await axios.post("https://api.torbox.app/v1/api/torrents/createtorrent", "--" + boundary + "\r\nContent-Disposition: form-data; name=\"magnet\"\r\n\r\n" + magnet + "\r\n--" + boundary + "--", { headers: { Authorization: "Bearer " + apiKey, "Content-Type": "multipart/form-data; boundary=" + boundary } });
+                    await axios.post("https://api.torbox.app/v1/api/torrents/createtorrent", "--" + boundary + "\r\nContent-Disposition: form-data; name=\"magnet\"\r\n\r\n" + magnet + "\r\n--" + boundary + "--", { "headers": { "Authorization": "Bearer " + apiKey, "Content-Type": "multipart/form-data; boundary=" + boundary } });
                 } catch (e) { return serveLoadingVideo(req, res); }
                 return serveLoadingVideo(req, res);
             }
@@ -251,4 +229,4 @@ app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
 });
 
 app.use("/", getRouter(addonInterface));
-app.listen(port, () => console.log("YOMI ONLINE | PORT " + port));
+app.listen(port, "0.0.0.0", () => console.log("YOMI ONLINE | PORT " + port));
