@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Fuzzy Filter
+// (Clean Architecture + Token-Based Keyword Filter)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -26,7 +26,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "7.7.9", 
+    version: "7.7.10", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -148,25 +148,38 @@ function generateDynamicPoster(title) {
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
 }
 
-function isCJK(str) {
-    return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uFAFF\uFF66-\uFF9F\uAC00-\uD7A3]/.test(str);
-}
-
-function normalizeForSearch(str) {
-    return str.toLowerCase().replace(/[\s\-_:'",.!?()\[\]]/g, "");
-}
-
-function yomiFuzzyMatch(torrentTitle, searchTitles) {
+//===============
+// TOKEN-BASED KEYWORD FILTER (REPLACES FUZZY MATCH)
+//===============
+function yomiKeywordMatch(torrentTitle, searchTitles) {
     if (!searchTitles || searchTitles.length === 0) return true;
 
-    const cleanSearchTerms = [...new Set(searchTitles)]
-        .filter(t => t && (t.trim().length > 2 || isCJK(t)))
-        .map(t => normalizeForSearch(t));
+    // Erstelle einen Pool aus allen gueltigen Such-Woertern (laenger als 3 Buchstaben)
+    const keywordPool = new Set();
+    searchTitles.forEach(title => {
+        if (!title) return;
+        // Erkenne asiatische Zeichen (CJK) - diese dürfen kurz bleiben
+        const isCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uFAFF\uFF66-\uFF9F\uAC00-\uD7A3]/.test(title);
+        if (isCJK) {
+            keywordPool.add(title.replace(/[\s\-_:'",.!?()\[\]]/g, "")); // Ganzes japanisches Wort
+            return;
+        }
+        
+        // Zerteile Romaji/Englisch Titel in Einzelworte
+        const words = title.toLowerCase().split(/[\s\-_:'",.!?()\[\]]+/);
+        words.forEach(w => {
+            if (w.length > 3 && !/^(the|and|for|with)$/.test(w)) {
+                keywordPool.add(w);
+            }
+        });
+    });
 
-    if (cleanSearchTerms.length === 0) return true;
+    if (keywordPool.size === 0) return true;
 
-    const normalizedTorrentTitle = normalizeForSearch(torrentTitle);
-    return cleanSearchTerms.some(term => normalizedTorrentTitle.includes(term));
+    const lowerTorrentTitle = torrentTitle.toLowerCase().replace(/[\-_:'",.!?()\[\]]/g, " ");
+    
+    // Prüfe: Kommt WENIGSTENS EINS der Keywords im Torrent-Titel vor?
+    return Array.from(keywordPool).some(keyword => lowerTorrentTitle.includes(keyword));
 }
 
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
@@ -349,7 +362,11 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
 
-        torrents = torrents.filter(t => yomiFuzzyMatch(t.title, validSearchTitles));
+        // ===============
+        // KEYWORD FILTER AUFRUF
+        // Lässt alle Sukebei-Titel durch, die mindestens ein Synonym-Wort enthalten
+        // ===============
+        torrents = torrents.filter(t => yomiKeywordMatch(t.title, validSearchTitles));
 
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
 
@@ -379,9 +396,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
-            // ===============
-            // REAL-DEBRID LOGIC
-            // ===============
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
                 const isCached = matchedFile || progRD === 100;
@@ -400,7 +414,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     streamStatus = "⚡ Fast Download";
                 }
                 
-                // EPISODE FILTER
                 if (isCached || isTitleMatchingEpisode(t.title, requestedEp)) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
@@ -424,9 +437,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 }
             }
             
-            // ===============
-            // TORBOX LOGIC
-            // ===============
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp) : null;
                 const isCached = matchedFile || progTB === 100;
@@ -442,7 +452,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     streamStatus = `⏳ ${progTB}% Downloading`;
                 }
 
-                // EPISODE FILTER FIX: Darf nur durch, wenn Episode uebereinstimmt oder Gecached
                 if (isCached || isTitleMatchingEpisode(t.title, requestedEp)) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
