@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Koyeb Base + Seeder UI & Sorting Fix)
+// (Clean Architecture Edition)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -9,7 +9,7 @@ const axios = require("axios");
 const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime, getLatestAdultAnime, getJikanMeta, fetchEpisodeDetails } = require("./lib/anilist");
 const { searchSukebeiForHentai, cleanTorrentTitle } = require("./lib/sukebei");
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require("./lib/debrid");
-const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile } = require("./lib/parser");
+const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile, fuzzyTitleMatch } = require("./lib/parser");
 
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
@@ -26,7 +26,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "6.9.9", 
+    version: "7.7.7", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -269,11 +269,12 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:") && !id.startsWith("kitsu:") && !id.startsWith("tt")) return Promise.resolve({ streams: [] });
     try {
         const userConfig = parseConfig(config);
-        
         const tbKeyToUse = userConfig.tbKey || INTERNAL_TB_KEY;
         if (!userConfig.rdKey && !tbKeyToUse) return { streams: [] };
         
         let searchTitle = "", requestedEp = 1, aniListIdForFallback = null;
+        let validSearchTitles = []; 
+        
         const parts = id.split(":");
 
         if (id.startsWith("anilist:")) {
@@ -304,6 +305,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         }
 
         if (!searchTitle) return { streams: [] };
+        validSearchTitles.push(searchTitle);
+        
         let torrents = await searchSukebeiForHentai(searchTitle);
         
         if (!torrents.length) {
@@ -312,19 +315,25 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
                 if (fallbackMeta.altName && fallbackMeta.altName.length > 2) fallbackTitles.add(fallbackMeta.altName);
-                if (fallbackMeta.synonyms) fallbackMeta.synonyms.forEach(syn => { if (/^[a-zA-Z0-9\s\-_!:]+$/.test(syn)) fallbackTitles.add(syn); });
+                if (fallbackMeta.synonyms) fallbackMeta.synonyms.forEach(syn => fallbackTitles.add(syn));
                 
                 const primaryWords = searchTitle.split(/\s+/);
                 if (primaryWords.length >= 2) fallbackTitles.add(primaryWords.slice(0, 2).join(" "));
                 if (primaryWords.length > 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
                 
                 for (const altTitle of fallbackTitles) {
+                    validSearchTitles.push(altTitle); 
                     torrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
                     if (torrents.length > 0) break;
                 }
             }
         }
-        
+
+        // ===============
+        // FUZZY FILTER
+        // ===============
+        torrents = torrents.filter(t => fuzzyTitleMatch(t.title, validSearchTitles));
+
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
 
         const uniqueTorrents = new Map();
@@ -351,7 +360,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const streamLang = extractLanguage(t.title, userLangs);
             const { res } = extractTags(t.title);
             const bytes = parseSizeToBytes(t.size);
-            const seeders = parseInt(t.seeders, 10) || 0; // Seeder Parsing-Sicherung
+            const seeders = parseInt(t.seeders, 10) || 0;
             
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
@@ -374,7 +383,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (isCached || progRD !== undefined || true) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
-                        // SEEDER INJECTION FIX: Hier wurden die Seeder wieder dem UI-Text hinzugefügt
                         description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
                         url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, 
                         behaviorHints: { bingeGroup: (isCached ? "rd_" : "dl_") + t.hash, notWebReady: !isCached }, 
@@ -413,7 +421,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (isCached || progTB !== undefined || true) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
-                        // SEEDER INJECTION FIX
                         description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
                         url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, 
                         behaviorHints: { bingeGroup: (isCached ? "tb_" : "dl_") + t.hash, notWebReady: !isCached }, 
@@ -455,7 +462,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (sB !== -1) return 1; 
             } 
             
-            // SORTING FIX: Ungecachte Streams werden hart nach Seedern sortiert!
             if (!a._isCached && !b._isCached) {
                 if (b._seeders !== a._seeders) return b._seeders - a._seeders;
             }
