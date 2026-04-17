@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Forensic Logging + Lenient Episode Match)
+// (Clean Architecture + Fixed Episode Parsing)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -26,7 +26,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "7.7.12", 
+    version: "7.7.13", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -149,7 +149,6 @@ function generateDynamicPoster(title) {
 function rawSubstringMatch(torrentTitle, searchTitles) {
     if (!searchTitles || searchTitles.length === 0) return true;
 
-    // Wir entfernen wirklich ALLE störenden Zeichen für den Abgleich
     const lowerTorrentTitle = torrentTitle.toLowerCase();
     const noSpaceTorrent = lowerTorrentTitle.replace(/[\s\-_:'",.!?()\[\]~]/g, "");
     
@@ -170,13 +169,9 @@ function rawSubstringMatch(torrentTitle, searchTitles) {
 // HENTAI-EPISODEN-FILTER (Leniency für fehlende Episodennummern)
 //===============
 function yomiIsEpisodeMatch(title, requestedEp) {
-    // 1. Check auf Batches
     if (/batch|complete|all\s+episodes/i.test(title)) return true;
-    
-    // 2. Nutze den strikten Parser
     if (isEpisodeMatch(title, requestedEp)) return true;
 
-    // 3. HENTAI-BYPASS: Wenn Stremio Episode 1 sucht, aber der Torrent GAR KEINE Nummer hat -> Durchlassen!
     if (requestedEp === 1) {
         const epNum = extractEpisodeNumber(title, 1);
         if (epNum === null || epNum === 1) {
@@ -315,21 +310,33 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         
         const parts = id.split(":");
 
+        // =======================
+        // EPISODEN ID PARSING FIX
+        // =======================
         if (id.startsWith("anilist:")) {
-            aniListIdForFallback = parts[1];
-            if (parts.length > 2 && isNaN(parts[2]) && parts[2].length > 5) {
-                searchTitle = sanitizeSearchQuery(fromBase64Safe(parts[2]));
+            let payload = parts[1];
+            if (payload && payload.includes("-")) {
+                let subParts = payload.split("-");
+                aniListIdForFallback = subParts[0];
+                requestedEp = parseInt(subParts[1], 10) || 1;
             } else {
-                if (aniListIdForFallback) {
-                    const freshMeta = await getAnimeMeta(aniListIdForFallback);
-                    if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
-                }
+                aniListIdForFallback = payload;
+                requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
             }
-            requestedEp = parseInt(parts[parts.length - 1], 10) || 1;
+            if (aniListIdForFallback) {
+                const freshMeta = await getAnimeMeta(aniListIdForFallback);
+                if (freshMeta) searchTitle = sanitizeSearchQuery(freshMeta.name);
+            }
         } else if (id.startsWith("sukebei:")) {
             let payload = parts[1];
-            searchTitle = sanitizeSearchQuery(fromBase64Safe(payload));
-            requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+            if (payload && payload.includes("-")) {
+                let subParts = payload.split("-");
+                searchTitle = sanitizeSearchQuery(fromBase64Safe(subParts[0]));
+                requestedEp = parseInt(subParts[1], 10) || 1;
+            } else {
+                searchTitle = sanitizeSearchQuery(fromBase64Safe(payload));
+                requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
+            }
         } else if (id.startsWith("kitsu:")) {
             try {
                 const res = await axios.get(`https://anime-kitsu.strem.fun/meta/anime/${parts[0] + ":" + parts[1]}.json`, { timeout: 4000 });
@@ -380,7 +387,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
         console.log(`[YOMI DEBUG] Alle erlaubten Synonyme:`, validSearchTitles);
 
-        // FILTER FORENSIK
         let filterDropCount = 0;
         torrents = torrents.filter(t => {
             const keep = rawSubstringMatch(t.title, validSearchTitles);
@@ -423,7 +429,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
-            // Ep Match Check (Mit Hentai Bypass!)
             const isEpMatch = yomiIsEpisodeMatch(t.title, requestedEp);
 
             if (userConfig.rdKey) {
