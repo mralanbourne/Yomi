@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Token-Based Keyword Filter)
+// (Clean Architecture + Raw Substring Filter)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -26,7 +26,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "7.7.10", 
+    version: "7.8.8", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -149,37 +149,32 @@ function generateDynamicPoster(title) {
 }
 
 //===============
-// TOKEN-BASED KEYWORD FILTER (REPLACES FUZZY MATCH)
+// RADIKAL EINFACHER RAW-FILTER
 //===============
-function yomiKeywordMatch(torrentTitle, searchTitles) {
+function rawSubstringMatch(torrentTitle, searchTitles) {
     if (!searchTitles || searchTitles.length === 0) return true;
-
-    // Erstelle einen Pool aus allen gueltigen Such-Woertern (laenger als 3 Buchstaben)
-    const keywordPool = new Set();
-    searchTitles.forEach(title => {
-        if (!title) return;
-        // Erkenne asiatische Zeichen (CJK) - diese dürfen kurz bleiben
-        const isCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uFAFF\uFF66-\uFF9F\uAC00-\uD7A3]/.test(title);
-        if (isCJK) {
-            keywordPool.add(title.replace(/[\s\-_:'",.!?()\[\]]/g, "")); // Ganzes japanisches Wort
-            return;
-        }
-        
-        // Zerteile Romaji/Englisch Titel in Einzelworte
-        const words = title.toLowerCase().split(/[\s\-_:'",.!?()\[\]]+/);
-        words.forEach(w => {
-            if (w.length > 3 && !/^(the|and|for|with)$/.test(w)) {
-                keywordPool.add(w);
-            }
-        });
-    });
-
-    if (keywordPool.size === 0) return true;
 
     const lowerTorrentTitle = torrentTitle.toLowerCase().replace(/[\-_:'",.!?()\[\]]/g, " ");
     
-    // Prüfe: Kommt WENIGSTENS EINS der Keywords im Torrent-Titel vor?
-    return Array.from(keywordPool).some(keyword => lowerTorrentTitle.includes(keyword));
+    for (const title of searchTitles) {
+        if (!title || title.trim().length === 0) continue;
+        
+        // Suche einfach exakt den String, wie er vom Nutzer/AniList kam (nur Kleinbuchstaben)
+        const searchString = title.toLowerCase().trim();
+        
+        // Wenn der Suchstring (z.B. "hajimete no orusuban") exakt so im Torrent steht -> Treffer
+        if (lowerTorrentTitle.includes(searchString)) {
+            return true;
+        }
+        
+        // Fallback: Wenn AniList "Hajimete no Orusuban" liefert, der Torrent aber "HajimetenoOrusuban" heisst
+        const noSpaceSearch = searchString.replace(/\s+/g, "");
+        const noSpaceTorrent = lowerTorrentTitle.replace(/\s+/g, "");
+        if (noSpaceTorrent.includes(noSpaceSearch)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
@@ -344,6 +339,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         let torrents = await searchSukebeiForHentai(searchTitle);
         
         if (!torrents.length) {
+            console.log("[Stream] Engaging Universal Fallback Engine...");
             let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
@@ -363,10 +359,10 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         }
 
         // ===============
-        // KEYWORD FILTER AUFRUF
-        // Lässt alle Sukebei-Titel durch, die mindestens ein Synonym-Wort enthalten
+        // ROHTEXT FILTER AUFRUF
+        // Erlaubt exakte Teil-Übereinstimmungen und ignoriert Leerzeichen-Fehler
         // ===============
-        torrents = torrents.filter(t => yomiKeywordMatch(t.title, validSearchTitles));
+        torrents = torrents.filter(t => rawSubstringMatch(t.title, validSearchTitles));
 
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
 
