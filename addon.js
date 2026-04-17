@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Inline Fuzzy Filter for Sukebei)
+// (Clean Architecture + Fuzzy Filter
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -26,7 +26,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "7.7.8", 
+    version: "7.7.9", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -148,22 +148,17 @@ function generateDynamicPoster(title) {
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
 }
 
-//===============
-// INLINE FUZZY FILTER LOGIC (EXCLUSIV FÜR YOMI/SUKEBEI)
-//===============
 function isCJK(str) {
     return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uFAFF\uFF66-\uFF9F\uAC00-\uD7A3]/.test(str);
 }
 
 function normalizeForSearch(str) {
-    // Quetscht alles zu einem String ohne Leer- oder Sonderzeichen zusammen
     return str.toLowerCase().replace(/[\s\-_:'",.!?()\[\]]/g, "");
 }
 
 function yomiFuzzyMatch(torrentTitle, searchTitles) {
     if (!searchTitles || searchTitles.length === 0) return true;
 
-    // Erstelle Liste bereinigter Suchbegriffe (ignoriere zu kurze Worte, außer CJK)
     const cleanSearchTerms = [...new Set(searchTitles)]
         .filter(t => t && (t.trim().length > 2 || isCJK(t)))
         .map(t => normalizeForSearch(t));
@@ -171,8 +166,6 @@ function yomiFuzzyMatch(torrentTitle, searchTitles) {
     if (cleanSearchTerms.length === 0) return true;
 
     const normalizedTorrentTitle = normalizeForSearch(torrentTitle);
-    
-    // Prüfe, ob mindestens ein Suchbegriff (ohne Leerzeichen) im Torrentnamen vorkommt
     return cleanSearchTerms.some(term => normalizedTorrentTitle.includes(term));
 }
 
@@ -338,7 +331,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         let torrents = await searchSukebeiForHentai(searchTitle);
         
         if (!torrents.length) {
-            console.log("[Stream] Engaging Universal Fallback Engine...");
             let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
@@ -357,9 +349,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
 
-        // ===============
-        // FILTER AUFRUF: Nutzt die internen Fuzzy-Funktionen
-        // ===============
         torrents = torrents.filter(t => yomiFuzzyMatch(t.title, validSearchTitles));
 
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
@@ -390,6 +379,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
+            // ===============
+            // REAL-DEBRID LOGIC
+            // ===============
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
                 const isCached = matchedFile || progRD === 100;
@@ -408,7 +400,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     streamStatus = "⚡ Fast Download";
                 }
                 
-                if (isCached || progRD !== undefined || true) {
+                // EPISODE FILTER
+                if (isCached || isTitleMatchingEpisode(t.title, requestedEp)) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
                         description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
@@ -431,6 +424,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 }
             }
             
+            // ===============
+            // TORBOX LOGIC
+            // ===============
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp) : null;
                 const isCached = matchedFile || progTB === 100;
@@ -446,7 +442,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     streamStatus = `⏳ ${progTB}% Downloading`;
                 }
 
-                if (isCached || progTB !== undefined || true) {
+                // EPISODE FILTER FIX: Darf nur durch, wenn Episode uebereinstimmt oder Gecached
+                if (isCached || isTitleMatchingEpisode(t.title, requestedEp)) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
                         description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
