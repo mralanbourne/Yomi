@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Koyeb Base + RD+ Cache Radar + Subtitle Injector)
+// (Koyeb Base + Seeder UI & Sorting Fix)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -269,7 +269,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:") && !id.startsWith("kitsu:") && !id.startsWith("tt")) return Promise.resolve({ streams: [] });
     try {
         const userConfig = parseConfig(config);
-        if (!userConfig.rdKey && !userConfig.tbKey) return { streams: [] };
+        
+        const tbKeyToUse = userConfig.tbKey || INTERNAL_TB_KEY;
+        if (!userConfig.rdKey && !tbKeyToUse) return { streams: [] };
         
         let searchTitle = "", requestedEp = 1, aniListIdForFallback = null;
         const parts = id.split(":");
@@ -313,7 +315,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (fallbackMeta.synonyms) fallbackMeta.synonyms.forEach(syn => { if (/^[a-zA-Z0-9\s\-_!:]+$/.test(syn)) fallbackTitles.add(syn); });
                 
                 const primaryWords = searchTitle.split(/\s+/);
-                
                 if (primaryWords.length >= 2) fallbackTitles.add(primaryWords.slice(0, 2).join(" "));
                 if (primaryWords.length > 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
                 
@@ -324,20 +325,17 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
         
-        // HIER WURDE DER ZU STRENGE FILTER ENTFERNT: verifyTitleMatch blockiert bei Sukebei zu viel!
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
 
-        // Deduplication
         const uniqueTorrents = new Map();
         torrents.forEach(t => uniqueTorrents.set(t.hash, t));
         torrents = Array.from(uniqueTorrents.values());
 
         const hashes = torrents.map(t => t.hash);
         
-        // TB KEY LOGIC: Nutze INTERNAL_TB_KEY nur für die Cache-Abfrage (RD+ Radar), nicht für Streams!
         const [rdC, tbC, rdA, tbA] = await Promise.all([
             userConfig.rdKey ? checkRD(hashes, userConfig.rdKey).catch(() => ({})) : {},
-            (userConfig.tbKey || INTERNAL_TB_KEY) ? checkTorbox(hashes, userConfig.tbKey || INTERNAL_TB_KEY).catch(() => ({})) : {},
+            tbKeyToUse ? checkTorbox(hashes, tbKeyToUse).catch(() => ({})) : {},
             userConfig.rdKey ? getActiveRD(userConfig.rdKey).catch(() => ({})) : {},
             userConfig.tbKey ? getActiveTorbox(userConfig.tbKey).catch(() => ({})) : {}
         ]);
@@ -353,10 +351,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const streamLang = extractLanguage(t.title, userLangs);
             const { res } = extractTags(t.title);
             const bytes = parseSizeToBytes(t.size);
+            const seeders = parseInt(t.seeders, 10) || 0; // Seeder Parsing-Sicherung
             
-            // ===============
-            // REAL-DEBRID LOGIC (Mit RD+ Radar)
-            // ===============
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
                 const isCached = matchedFile || progRD === 100;
@@ -364,7 +360,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 let streamStatus = "☁️ Download";
                 let uiName = `YOMI [☁️ RD]`;
 
-                // RD+ Radar: Wenn RD nicht gecached ist, aber Torbox es hat
                 if (isCached) {
                     uiName = `YOMI [⚡ RD]`;
                     streamStatus = "⚡ Cached";
@@ -376,14 +371,14 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     streamStatus = "⚡ Fast Download";
                 }
                 
-                // Wir lassen (fast) alle Streams durch, um den "1 Ergebnis" Bug zu beheben
                 if (isCached || progRD !== undefined || true) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
-                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size}`, 
+                        // SEEDER INJECTION FIX: Hier wurden die Seeder wieder dem UI-Text hinzugefügt
+                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
                         url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, 
                         behaviorHints: { bingeGroup: (isCached ? "rd_" : "dl_") + t.hash, notWebReady: !isCached }, 
-                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progRD || 0 
+                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progRD || 0, _seeders: seeders 
                     };
                     
                     if (isCached && filesRD) {
@@ -400,9 +395,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 }
             }
             
-            // ===============
-            // TORBOX LOGIC
-            // ===============
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp) : null;
                 const isCached = matchedFile || progTB === 100;
@@ -421,10 +413,11 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (isCached || progTB !== undefined || true) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
-                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size}`, 
+                        // SEEDER INJECTION FIX
+                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
                         url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, 
                         behaviorHints: { bingeGroup: (isCached ? "tb_" : "dl_") + t.hash, notWebReady: !isCached }, 
-                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0 
+                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0, _seeders: seeders
                     };
                     
                     if (isCached && filesTB) {
@@ -461,6 +454,11 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (sA !== -1) return -1; 
                 if (sB !== -1) return 1; 
             } 
+            
+            // SORTING FIX: Ungecachte Streams werden hart nach Seedern sortiert!
+            if (!a._isCached && !b._isCached) {
+                if (b._seeders !== a._seeders) return b._seeders - a._seeders;
+            }
             
             return b._bytes - a._bytes; 
         }), cacheMaxAge: 3600 };
