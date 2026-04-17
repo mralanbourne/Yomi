@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture Edition)
+// (Clean Architecture + Inline Fuzzy Filter for Sukebei)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -9,7 +9,7 @@ const axios = require("axios");
 const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime, getLatestAdultAnime, getJikanMeta, fetchEpisodeDetails } = require("./lib/anilist");
 const { searchSukebeiForHentai, cleanTorrentTitle } = require("./lib/sukebei");
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require("./lib/debrid");
-const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile, fuzzyTitleMatch } = require("./lib/parser");
+const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile } = require("./lib/parser");
 
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
@@ -26,7 +26,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "7.7.7", 
+    version: "7.7.8", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -146,6 +146,34 @@ function generateDynamicPoster(title) {
     }
     if (line) lines.push(line.trim());
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
+}
+
+//===============
+// INLINE FUZZY FILTER LOGIC (EXCLUSIV FÜR YOMI/SUKEBEI)
+//===============
+function isCJK(str) {
+    return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uFAFF\uFF66-\uFF9F\uAC00-\uD7A3]/.test(str);
+}
+
+function normalizeForSearch(str) {
+    // Quetscht alles zu einem String ohne Leer- oder Sonderzeichen zusammen
+    return str.toLowerCase().replace(/[\s\-_:'",.!?()\[\]]/g, "");
+}
+
+function yomiFuzzyMatch(torrentTitle, searchTitles) {
+    if (!searchTitles || searchTitles.length === 0) return true;
+
+    // Erstelle Liste bereinigter Suchbegriffe (ignoriere zu kurze Worte, außer CJK)
+    const cleanSearchTerms = [...new Set(searchTitles)]
+        .filter(t => t && (t.trim().length > 2 || isCJK(t)))
+        .map(t => normalizeForSearch(t));
+
+    if (cleanSearchTerms.length === 0) return true;
+
+    const normalizedTorrentTitle = normalizeForSearch(torrentTitle);
+    
+    // Prüfe, ob mindestens ein Suchbegriff (ohne Leerzeichen) im Torrentnamen vorkommt
+    return cleanSearchTerms.some(term => normalizedTorrentTitle.includes(term));
 }
 
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
@@ -330,9 +358,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         }
 
         // ===============
-        // FUZZY FILTER
+        // FILTER AUFRUF: Nutzt die internen Fuzzy-Funktionen
         // ===============
-        torrents = torrents.filter(t => fuzzyTitleMatch(t.title, validSearchTitles));
+        torrents = torrents.filter(t => yomiFuzzyMatch(t.title, validSearchTitles));
 
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
 
