@@ -1,5 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
+// (Historical Koyeb Base + Subtitle Injector)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -7,7 +8,7 @@ const axios = require("axios");
 const { searchAnime, getAnimeMeta, getTrendingAnime, getTopAnime, getAiringAnime, getSeasonalAnime, fetchEpisodeDetails } = require("./lib/anilist");
 const { searchSukebei, cleanTorrentTitle } = require("./lib/sukebei");
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require("./lib/debrid");
-const { selectBestVideoFile } = require("./lib/parser");
+const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile, isSeasonBatch, verifyTitleMatch } = require("./lib/parser");
 
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
@@ -19,11 +20,8 @@ function toBase64Safe(str) {
 }
 
 function fromBase64Safe(str) { 
-    try { 
-        return Buffer.from(str.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); 
-    } catch (e) { 
-        return ""; 
-    } 
+    try { return Buffer.from(str.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); } 
+    catch (e) { return ""; } 
 }
 
 function parseConfig(config) {
@@ -35,9 +33,7 @@ function parseConfig(config) {
         } else { 
             parsed = config || {}; 
         } 
-    } catch (e) {
-        console.error("Fehler beim Parsen der Konfiguration:", e);
-    }
+    } catch (e) {}
     return parsed;
 }
 
@@ -105,7 +101,7 @@ function sanitizeSearchQuery(title) {
 }
 
 const manifest = {
-    "id": "org.community.yomi", "version": "8.2.2", "name": "Yomi", "logo": BASE_URL + "/yomi.png",
+    "id": "org.community.yomi", "version": "8.2.1", "name": "Yomi", "logo": BASE_URL + "/yomi.png",
     "description": "The ultimate Debrid-powered Gateway for Sukebei. Parallel Search for Adult Content.",
     "types": ["anime", "movie", "series"],
     "resources": [
@@ -123,9 +119,6 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-//===============
-// RESTORED CATALOG HANDLER
-//===============
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     try {
         if (id === "yomi_search" && extra.search) {
@@ -181,9 +174,6 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     } catch (e) { return { "metas": [] }; }
 });
 
-//===============
-// RESTORED META HANDLER
-//===============
 builder.defineMetaHandler(async ({ type, id }) => {
     try {
         if (id.startsWith("tt")) {
@@ -248,9 +238,6 @@ builder.defineMetaHandler(async ({ type, id }) => {
     } catch (e) { return { "meta": null }; }
 });
 
-//===============
-// STREAM HANDLER (with Subtitle Injector)
-//===============
 builder.defineStreamHandler(async ({ type, id, config }) => {
     try {
         if (!id.startsWith("anilist:") && !id.startsWith("tt") && !id.startsWith("yomi_raw:")) return { "streams": [] };
@@ -336,7 +323,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             torrents = [...torrents, ...t];
         }
 
-        // Deduplication
         const uniqueTorrents = new Map();
         torrents.forEach(t => {
             if (!uniqueTorrents.has(t.hash)) uniqueTorrents.set(t.hash, t);
@@ -366,7 +352,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const streamLang = extractLanguage(t.title, userLangs);
             const flag = flags[streamLang] || "🇯🇵";
 
-            let isValidMatch = true;
+            let isValidMatch = true; 
 
             // ===============
             // REAL-DEBRID LOGIC (Inkl. Subtitles)
