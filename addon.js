@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Raw Substring Filter)
+// (Clean Architecture + Forensic Logging + Lenient Episode Match)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -26,7 +26,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "7.8.8", 
+    version: "7.7.12", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -127,11 +127,6 @@ function sanitizeSearchQuery(title) {
                 .trim();
 }
 
-function isTitleMatchingEpisode(title, requestedEp) {
-    if (/batch|complete|all\s+episodes/i.test(title)) return true;
-    return isEpisodeMatch(title, requestedEp);
-}
-
 function generateDynamicPoster(title) {
     let clean = title.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, " ").replace(/\(.*?\)/g, " ");
     let safeTitle = clean.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s{2,}/g, " ").substring(0, 30).trim().toUpperCase();
@@ -149,28 +144,42 @@ function generateDynamicPoster(title) {
 }
 
 //===============
-// RADIKAL EINFACHER RAW-FILTER
+// RADIKAL EINFACHER RAW-FILTER MIT DEBUGGING
 //===============
 function rawSubstringMatch(torrentTitle, searchTitles) {
     if (!searchTitles || searchTitles.length === 0) return true;
 
-    const lowerTorrentTitle = torrentTitle.toLowerCase().replace(/[\-_:'",.!?()\[\]]/g, " ");
+    // Wir entfernen wirklich ALLE störenden Zeichen für den Abgleich
+    const lowerTorrentTitle = torrentTitle.toLowerCase();
+    const noSpaceTorrent = lowerTorrentTitle.replace(/[\s\-_:'",.!?()\[\]~]/g, "");
     
     for (const title of searchTitles) {
         if (!title || title.trim().length === 0) continue;
         
-        // Suche einfach exakt den String, wie er vom Nutzer/AniList kam (nur Kleinbuchstaben)
         const searchString = title.toLowerCase().trim();
+        const noSpaceSearch = searchString.replace(/[\s\-_:'",.!?()\[\]~]/g, "");
         
-        // Wenn der Suchstring (z.B. "hajimete no orusuban") exakt so im Torrent steht -> Treffer
-        if (lowerTorrentTitle.includes(searchString)) {
+        if (noSpaceTorrent.includes(noSpaceSearch)) {
             return true;
         }
-        
-        // Fallback: Wenn AniList "Hajimete no Orusuban" liefert, der Torrent aber "HajimetenoOrusuban" heisst
-        const noSpaceSearch = searchString.replace(/\s+/g, "");
-        const noSpaceTorrent = lowerTorrentTitle.replace(/\s+/g, "");
-        if (noSpaceTorrent.includes(noSpaceSearch)) {
+    }
+    return false;
+}
+
+//===============
+// HENTAI-EPISODEN-FILTER (Leniency für fehlende Episodennummern)
+//===============
+function yomiIsEpisodeMatch(title, requestedEp) {
+    // 1. Check auf Batches
+    if (/batch|complete|all\s+episodes/i.test(title)) return true;
+    
+    // 2. Nutze den strikten Parser
+    if (isEpisodeMatch(title, requestedEp)) return true;
+
+    // 3. HENTAI-BYPASS: Wenn Stremio Episode 1 sucht, aber der Torrent GAR KEINE Nummer hat -> Durchlassen!
+    if (requestedEp === 1) {
+        const epNum = extractEpisodeNumber(title, 1);
+        if (epNum === null || epNum === 1) {
             return true;
         }
     }
@@ -333,13 +342,21 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             requestedEp = parts.length > 2 ? parseInt(parts[2], 10) : 1;
         }
 
-        if (!searchTitle) return { streams: [] };
+        console.log(`\n[YOMI DEBUG] ===== NEUE SUCHE =====`);
+        console.log(`[YOMI DEBUG] ID: ${id} | Episode: ${requestedEp}`);
+        console.log(`[YOMI DEBUG] Initialer Such-Titel: "${searchTitle}"`);
+
+        if (!searchTitle) {
+            console.log(`[YOMI DEBUG] Abbruch: Kein Such-Titel gefunden.`);
+            return { streams: [] };
+        }
         validSearchTitles.push(searchTitle);
         
         let torrents = await searchSukebeiForHentai(searchTitle);
+        console.log(`[YOMI DEBUG] Sukebei Raw Results fuer Haupttitel: ${torrents.length}`);
         
         if (!torrents.length) {
-            console.log("[Stream] Engaging Universal Fallback Engine...");
+            console.log("[YOMI DEBUG] Starte Universal Fallback Engine...");
             let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
@@ -353,16 +370,26 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 for (const altTitle of fallbackTitles) {
                     validSearchTitles.push(altTitle); 
                     torrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
-                    if (torrents.length > 0) break;
+                    if (torrents.length > 0) {
+                        console.log(`[YOMI DEBUG] Treffer mit Fallback-Titel: "${altTitle}" -> ${torrents.length} Torrents`);
+                        break;
+                    }
                 }
             }
         }
 
-        // ===============
-        // ROHTEXT FILTER AUFRUF
-        // Erlaubt exakte Teil-Übereinstimmungen und ignoriert Leerzeichen-Fehler
-        // ===============
-        torrents = torrents.filter(t => rawSubstringMatch(t.title, validSearchTitles));
+        console.log(`[YOMI DEBUG] Alle erlaubten Synonyme:`, validSearchTitles);
+
+        // FILTER FORENSIK
+        let filterDropCount = 0;
+        torrents = torrents.filter(t => {
+            const keep = rawSubstringMatch(t.title, validSearchTitles);
+            if (!keep) filterDropCount++;
+            return keep;
+        });
+
+        console.log(`[YOMI DEBUG] Titel-Filter hat ${filterDropCount} Torrents gelöscht.`);
+        console.log(`[YOMI DEBUG] Verbleibend nach Titel-Filter: ${torrents.length}`);
 
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
 
@@ -372,16 +399,20 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
         const hashes = torrents.map(t => t.hash);
         
+        console.log(`[YOMI DEBUG] Starte Debrid-Cache Prüfung für ${hashes.length} Hashes...`);
         const [rdC, tbC, rdA, tbA] = await Promise.all([
             userConfig.rdKey ? checkRD(hashes, userConfig.rdKey).catch(() => ({})) : {},
             tbKeyToUse ? checkTorbox(hashes, tbKeyToUse).catch(() => ({})) : {},
             userConfig.rdKey ? getActiveRD(userConfig.rdKey).catch(() => ({})) : {},
             userConfig.tbKey ? getActiveTorbox(userConfig.tbKey).catch(() => ({})) : {}
         ]);
+        console.log(`[YOMI DEBUG] Cache Prüfung abgeschlossen.`);
 
         const userLangs = Array.isArray(userConfig.language) ? userConfig.language : [userConfig.language || "ENG"];
         const streams = [];
         const flags = { "GER": "🇩🇪", "ITA": "🇮🇹", "FRE": "🇫🇷", "SPA": "🇪🇸", "RUS": "🇷🇺", "POR": "🇵🇹", "ARA": "🇸🇦", "CHI": "🇨🇳", "KOR": "🇰🇷", "HIN": "🇮🇳", "POL": "🇵🇱", "NLD": "🇳🇱", "TUR": "🇹🇷", "VIE": "🇻🇳", "IND": "🇮🇩", "JPN": "🇯🇵", "ENG": "🇬🇧", "MULTI": "🌍" };
+
+        let epDropCount = 0;
 
         torrents.forEach(t => {
             const hashLow = t.hash.toLowerCase();
@@ -392,6 +423,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
+            // Ep Match Check (Mit Hentai Bypass!)
+            const isEpMatch = yomiIsEpisodeMatch(t.title, requestedEp);
+
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
                 const isCached = matchedFile || progRD === 100;
@@ -410,7 +444,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     streamStatus = "⚡ Fast Download";
                 }
                 
-                if (isCached || isTitleMatchingEpisode(t.title, requestedEp)) {
+                if (isCached || isEpMatch) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
                         description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
@@ -430,6 +464,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                         }
                     }
                     streams.push(streamPayload);
+                } else {
+                    epDropCount++;
                 }
             }
             
@@ -448,7 +484,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     streamStatus = `⏳ ${progTB}% Downloading`;
                 }
 
-                if (isCached || isTitleMatchingEpisode(t.title, requestedEp)) {
+                if (isCached || isEpMatch) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
                         description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
@@ -471,6 +507,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 }
             }
         });
+
+        console.log(`[YOMI DEBUG] Episoden-Filter hat ${epDropCount} nicht-passende Einträge gelöscht.`);
+        console.log(`[YOMI DEBUG] Finale Streams an Stremio gesendet: ${streams.length}\n`);
 
         const searchWords = searchTitle.toLowerCase().split(/\s+/);
 
@@ -498,7 +537,10 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             
             return b._bytes - a._bytes; 
         }), cacheMaxAge: 3600 };
-    } catch (err) { return { streams: [] }; }
+    } catch (err) { 
+        console.error(`[YOMI DEBUG] FATAL ERROR:`, err.message);
+        return { streams: [] }; 
+    }
 });
 
 module.exports = { addonInterface: builder.getInterface(), manifest, parseConfig };
