@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Dynamic Season Extraction)
+// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Dynamic Meta Extension)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -233,9 +233,22 @@ builder.defineMetaHandler(async ({ type, id }) => {
         meta.type = "anime";
         
         let epCount = meta.episodes || 1;
+        // 🛡️ DYNAMIC META EXTENSION: Wenn der Anime 1 oder "Unknown" Episoden hat, scannen wir Sukebei ab.
         if (epCount === 1 || !meta.episodes) {
             try {
-                const torrents = await searchSukebeiForHentai(sanitizeSearchQuery(searchTitle));
+                let sQuery = sanitizeSearchQuery(searchTitle);
+                let torrents = await searchSukebeiForHentai(sQuery);
+                
+                // Nutze nun auch im Meta-Handler den Fallback, um Episoden für ungenaue/lange Namen zu finden
+                if (torrents.length === 0) {
+                    const words = sQuery.split(/\s+/);
+                    if (words.length >= 3) {
+                        torrents = await searchSukebeiForHentai(words.slice(0, 3).join(" "));
+                    } else if (words.length === 2 && sQuery.length > 4) {
+                        torrents = await searchSukebeiForHentai(sQuery);
+                    }
+                }
+
                 let maxDetected = 1;
                 torrents.forEach(t => {
                     const batch = getBatchRange(t.title);
@@ -402,9 +415,12 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
 
-        const baseTitles = new Set(validSearchTitles);
+        const baseTitles = new Set();
         validSearchTitles.forEach(t => {
-            const stripped = t.replace(/\b(?:\d+(?:st|nd|rd|th)\s+(?:Season|Part|Cour)|Season\s*\d+|S\d+|Part\s*\d+|Cour\s*\d+|第\s*\d+\s*(?:季|期|기))\b/ig, "").replace(/\s{2,}/g, " ").trim();
+            // 🛡️ EPISODE & SEASON STRIPPING: Extrahiert saubere Titel, sodass verifyTitleMatch flexibel filtern kann
+            const stripped = t.replace(/\b(?:\d+(?:st|nd|rd|th)\s+(?:Season|Part|Cour)|Season\s*\d+|S\d+|Part\s*\d+|Cour\s*\d+|Episode\s*\d+|Ep\s*\d+)\b/ig, "")
+                              .replace(/第\s*\d+\s*(?:季|期|기|話|话|集)/g, "")
+                              .replace(/\s{2,}/g, " ").trim();
             if (stripped.length > 4) baseTitles.add(stripped);
         });
         const finalValidTitles = Array.from(baseTitles);
