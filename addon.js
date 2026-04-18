@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Smart Size Checks + Batch Sorting + Anti-Slop Shield)
+// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Dynamic Season Extraction)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -143,12 +143,12 @@ function generateDynamicPoster(title) {
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
 }
 
-function yomiIsEpisodeMatch(title, requestedEp) {
-    if (isSeasonBatch(title, 1)) return true;
-    if (isEpisodeMatch(title, requestedEp, 1)) return true;
+function yomiIsEpisodeMatch(title, requestedEp, expectedSeason) {
+    if (isSeasonBatch(title, expectedSeason)) return true;
+    if (isEpisodeMatch(title, requestedEp, expectedSeason)) return true;
 
     if (requestedEp === 1) {
-        const epNum = extractEpisodeNumber(title, 1);
+        const epNum = extractEpisodeNumber(title, expectedSeason);
         if (epNum === null || epNum === 1) {
             return true;
         }
@@ -281,6 +281,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         if (!userConfig.rdKey && !tbKeyToUse) return { streams: [] };
         
         let searchTitle = "", requestedEp = 1, aniListIdForFallback = null;
+        let expectedSeason = 1;
         let validSearchTitles = []; 
         const isMovie = type === "movie";
         
@@ -331,6 +332,30 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             return { streams: [] };
         }
         validSearchTitles.push(searchTitle);
+
+        const extractSeason = (t) => {
+            const nthMatch = t.match(/\b(\d+)(?:st|nd|rd|th)\s+(?:Season|Part|Cour)\b/i);
+            if (nthMatch) return parseInt(nthMatch[1], 10);
+            const m = t.match(/\b(?:S|Season|Part|Cour|Dai|Di)\s*0*(\d+)\b/i);
+            if (m) return parseInt(m[1], 10);
+            if (/\b(?:second|ii)\b/i.test(t)) return 2;
+            if (/\b(?:third|iii)\b/i.test(t)) return 3;
+            if (/\b(?:fourth|iv)\b/i.test(t)) return 4;
+            if (/\b(?:fifth|v)\b/i.test(t)) return 5;
+            if (/\b(?:sixth|vi)\b/i.test(t)) return 6;
+            return null;
+        };
+
+        if (!id.startsWith("tt")) {
+            let detected = null;
+            for (let s of validSearchTitles) {
+                if (s) {
+                    let d = extractSeason(s);
+                    if (d && d > 1) { detected = d; break; }
+                }
+            }
+            if (detected) expectedSeason = detected;
+        }
         
         let torrents = await searchSukebeiForHentai(searchTitle);
         console.log(`[YOMI DEBUG] Sukebei Raw Results fuer Haupttitel: ${torrents.length}`);
@@ -341,7 +366,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
                 
-                // 🛡️ ANTI-SLOP: Ignoriere generische Synonyme unter 5 Zeichen (z.B. "BTR")
                 if (fallbackMeta.altName && fallbackMeta.altName.length > 4) fallbackTitles.add(fallbackMeta.altName);
                 if (fallbackMeta.synonyms) {
                     fallbackMeta.synonyms.forEach(syn => {
@@ -354,7 +378,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 const w3 = primaryWords.slice(0, 3).join(" ");
                 const w4 = primaryWords.slice(0, 4).join(" ");
                 
-                // 🛡️ ANTI-SLOP: Verbiete zu kurze Fragment-Suchen
                 if (primaryWords.length >= 2 && w2.length > 4) fallbackTitles.add(w2);
                 if (primaryWords.length >= 3 && w3.length > 4) fallbackTitles.add(w3);
                 if (primaryWords.length >= 4 && w4.length > 4) fallbackTitles.add(w4);
@@ -363,6 +386,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     if (!altTitle || validSearchTitles.includes(altTitle)) continue;
                     validSearchTitles.push(altTitle); 
                     
+                    let d = extractSeason(altTitle);
+                    if (d && d > 1 && expectedSeason === 1) expectedSeason = d;
+
                     const extraTorrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
                     if (extraTorrents.length > 0) {
                         console.log(`[YOMI DEBUG] Zusaetzliche Treffer mit Fallback-Titel: "${altTitle}" -> ${extraTorrents.length} Torrents`);
@@ -376,22 +402,27 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
 
-        console.log(`[YOMI DEBUG] Alle erlaubten Synonyme:`, validSearchTitles);
+        const baseTitles = new Set(validSearchTitles);
+        validSearchTitles.forEach(t => {
+            const stripped = t.replace(/\b(?:\d+(?:st|nd|rd|th)\s+(?:Season|Part|Cour)|Season\s*\d+|S\d+|Part\s*\d+|Cour\s*\d+|第\s*\d+\s*(?:季|期|기))\b/ig, "").replace(/\s{2,}/g, " ").trim();
+            if (stripped.length > 4) baseTitles.add(stripped);
+        });
+        const finalValidTitles = Array.from(baseTitles);
+
+        console.log(`[YOMI DEBUG] Alle erlaubten Synonyme (inkl. Base-Titel):`, finalValidTitles);
 
         let filterDropCount = 0;
         torrents = torrents.filter(t => {
-            // 🛡️ ANTI-SLOP: Harter Bann für alle Image-, Manga-, Photobook- und Cosplay-Kategorien auf Sukebei
             if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) {
                 filterDropCount++;
                 return false;
             }
 
-            // 🛡️ ANTI-SLOP: Wir nutzen nun verifyTitleMatch statt rawSubstringMatch um JAV-Mist fernzuhalten
-            const keep = verifyTitleMatch(t.title, validSearchTitles);
+            const keep = verifyTitleMatch(t.title, finalValidTitles);
             if (!keep) { filterDropCount++; return false; }
 
             const bytes = parseSizeToBytes(t.size);
-            const isBatch = isSeasonBatch(t.title, 1);
+            const isBatch = isSeasonBatch(t.title, expectedSeason);
             
             if (!isMovie && !isBatch && bytes > 4.5 * 1024 * 1024 * 1024) {
                 filterDropCount++;
@@ -436,8 +467,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
-            const isBatch = isSeasonBatch(t.title, 1);
-            const isEpMatch = yomiIsEpisodeMatch(t.title, requestedEp);
+            const isBatch = isSeasonBatch(t.title, expectedSeason);
+            const isEpMatch = yomiIsEpisodeMatch(t.title, requestedEp, expectedSeason);
             
             if (!isEpMatch) {
                 epDropCount++;
@@ -447,7 +478,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const batchStr = isBatch ? " | 📦 Batch" : "";
 
             if (userConfig.rdKey) {
-                let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp, 1, isMovie) : null;
+                let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp, expectedSeason, isMovie) : null;
                 const isStremThruCached = filesRD && filesRD.length > 0;
                 const isDownloading = progRD !== undefined && progRD < 100;
                 
@@ -488,7 +519,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
             
             if (userConfig.tbKey) {
-                let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp, 1, isMovie) : null;
+                let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp, expectedSeason, isMovie) : null;
                 const isCached = filesTB && filesTB.length > 0;
                 const isDownloading = progTB !== undefined && progTB < 100;
                 
@@ -510,7 +541,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                         description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}${batchStr}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
                         url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, 
                         behaviorHints: { bingeGroup: (isCached ? "tb_" : "dl_") + t.hash, notWebReady: !isCached }, 
-                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0, _seeders: seeders, _isBatch: isBatch
+                        _bytes: bytes, streamLang, _isCached: isCached, _res: res, _prog: progTB || 0, _seeders: seeders, _isBatch: isBatch
                     };
                     
                     if (isCached && filesTB) {
