@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Smart Size Checks + Batch Sorting)
+// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Smart Size Checks + Batch Sorting + Anti-Slop Shield)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -9,7 +9,7 @@ const axios = require("axios");
 const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime, getLatestAdultAnime, getJikanMeta, fetchEpisodeDetails } = require("./lib/anilist");
 const { searchSukebeiForHentai, cleanTorrentTitle } = require("./lib/sukebei");
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require("./lib/debrid");
-const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile, isSeasonBatch } = require("./lib/parser");
+const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile, isSeasonBatch, verifyTitleMatch } = require("./lib/parser");
 
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
@@ -141,25 +141,6 @@ function generateDynamicPoster(title) {
     }
     if (line) lines.push(line.trim());
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
-}
-
-function rawSubstringMatch(torrentTitle, searchTitles) {
-    if (!searchTitles || searchTitles.length === 0) return true;
-
-    const lowerTorrentTitle = torrentTitle.toLowerCase();
-    const noSpaceTorrent = lowerTorrentTitle.replace(/[\s\-_:'",.!?()\[\]~]/g, "");
-    
-    for (const title of searchTitles) {
-        if (!title || title.trim().length === 0) continue;
-        
-        const searchString = title.toLowerCase().trim();
-        const noSpaceSearch = searchString.replace(/[\s\-_:'",.!?()\[\]~]/g, "");
-        
-        if (noSpaceTorrent.includes(noSpaceSearch)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 function yomiIsEpisodeMatch(title, requestedEp) {
@@ -359,13 +340,24 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
-                if (fallbackMeta.altName && fallbackMeta.altName.length > 2) fallbackTitles.add(fallbackMeta.altName);
-                if (fallbackMeta.synonyms) fallbackMeta.synonyms.forEach(syn => fallbackTitles.add(syn));
+                
+                // 🛡️ ANTI-SLOP: Ignoriere generische Synonyme unter 5 Zeichen (z.B. "BTR")
+                if (fallbackMeta.altName && fallbackMeta.altName.length > 4) fallbackTitles.add(fallbackMeta.altName);
+                if (fallbackMeta.synonyms) {
+                    fallbackMeta.synonyms.forEach(syn => {
+                        if (syn.length > 4) fallbackTitles.add(syn);
+                    });
+                }
                 
                 const primaryWords = searchTitle.split(/\s+/);
-                if (primaryWords.length >= 2) fallbackTitles.add(primaryWords.slice(0, 2).join(" "));
-                if (primaryWords.length >= 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
-                if (primaryWords.length >= 4) fallbackTitles.add(primaryWords.slice(0, 4).join(" "));
+                const w2 = primaryWords.slice(0, 2).join(" ");
+                const w3 = primaryWords.slice(0, 3).join(" ");
+                const w4 = primaryWords.slice(0, 4).join(" ");
+                
+                // 🛡️ ANTI-SLOP: Verbiete zu kurze Fragment-Suchen
+                if (primaryWords.length >= 2 && w2.length > 4) fallbackTitles.add(w2);
+                if (primaryWords.length >= 3 && w3.length > 4) fallbackTitles.add(w3);
+                if (primaryWords.length >= 4 && w4.length > 4) fallbackTitles.add(w4);
                 
                 for (const altTitle of fallbackTitles) {
                     if (!altTitle || validSearchTitles.includes(altTitle)) continue;
@@ -388,7 +380,14 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
         let filterDropCount = 0;
         torrents = torrents.filter(t => {
-            const keep = rawSubstringMatch(t.title, validSearchTitles);
+            // 🛡️ ANTI-SLOP: Harter Bann für alle Image-, Manga-, Photobook- und Cosplay-Kategorien auf Sukebei
+            if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) {
+                filterDropCount++;
+                return false;
+            }
+
+            // 🛡️ ANTI-SLOP: Wir nutzen nun verifyTitleMatch statt rawSubstringMatch um JAV-Mist fernzuhalten
+            const keep = verifyTitleMatch(t.title, validSearchTitles);
             if (!keep) { filterDropCount++; return false; }
 
             const bytes = parseSizeToBytes(t.size);
@@ -447,9 +446,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
             const batchStr = isBatch ? " | 📦 Batch" : "";
 
-            // ===============
-            // REAL-DEBRID
-            // ===============
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp, 1, isMovie) : null;
                 const isStremThruCached = filesRD && filesRD.length > 0;
@@ -491,16 +487,12 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 }
             }
             
-            // ===============
-            // TORBOX LOGIC
-            // ===============
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp, 1, isMovie) : null;
                 const isCached = filesTB && filesTB.length > 0;
                 const isDownloading = progTB !== undefined && progTB < 100;
                 
                 if (isCached && !matchedFile && !isMovie) {
-                    // Prevent pushing false-positives
                 } else {
                     let streamStatus = "☁️ Download";
                     let uiName = `YOMI [☁️ TB]`;
@@ -559,7 +551,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (sB !== -1) return 1; 
             } 
 
-            // 📦 BATCH PRIORITIZATION (Respektiert Sprache, überspringt aber Seed-schwache Singles)
             const aBatch = a._isBatch && (a._seeders > 0 || a._isCached) ? 1 : 0;
             const bBatch = b._isBatch && (b._seeders > 0 || b._isCached) ? 1 : 0;
             if (aBatch !== bBatch) return bBatch - aBatch;
