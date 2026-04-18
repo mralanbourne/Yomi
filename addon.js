@@ -26,7 +26,7 @@ function fromBase64Safe(str) {
 
 const manifest = {
     id: "org.community.yomi",
-    version: "7.7.13", 
+    version: "9.0.0", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
@@ -362,8 +362,12 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         let torrents = await searchSukebeiForHentai(searchTitle);
         console.log(`[YOMI DEBUG] Sukebei Raw Results fuer Haupttitel: ${torrents.length}`);
         
-        if (!torrents.length) {
-            console.log("[YOMI DEBUG] Starte Universal Fallback Engine...");
+        // =======================
+        // ENHANCED FALLBACK ENGINE
+        // Triggert nun auch bei < 15 Ergebnissen, um zersplitterte Suchergebnisse zu aggregieren
+        // =======================
+        if (torrents.length < 15) {
+            console.log("[YOMI DEBUG] Starte Universal Fallback Engine zur Erweiterung der Ergebnisse...");
             let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
@@ -371,15 +375,24 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (fallbackMeta.synonyms) fallbackMeta.synonyms.forEach(syn => fallbackTitles.add(syn));
                 
                 const primaryWords = searchTitle.split(/\s+/);
+                // Erweiterter Split für Hentai Titel, greift Kombinationen wie "Ane wa Yanmama" sicher ab
                 if (primaryWords.length >= 2) fallbackTitles.add(primaryWords.slice(0, 2).join(" "));
-                if (primaryWords.length > 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
+                if (primaryWords.length >= 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
+                if (primaryWords.length >= 4) fallbackTitles.add(primaryWords.slice(0, 4).join(" "));
                 
                 for (const altTitle of fallbackTitles) {
+                    if (!altTitle || validSearchTitles.includes(altTitle)) continue;
                     validSearchTitles.push(altTitle); 
-                    torrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
-                    if (torrents.length > 0) {
-                        console.log(`[YOMI DEBUG] Treffer mit Fallback-Titel: "${altTitle}" -> ${torrents.length} Torrents`);
-                        break;
+                    
+                    const extraTorrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
+                    if (extraTorrents.length > 0) {
+                        console.log(`[YOMI DEBUG] Zusaetzliche Treffer mit Fallback-Titel: "${altTitle}" -> ${extraTorrents.length} Torrents`);
+                        torrents = torrents.concat(extraTorrents); // Concat statt Overwrite
+                        // Wir stoppen, sobald wir eine solide Base aufgebaut haben, um Cloudflare nicht zu belasten
+                        if (torrents.length >= 30) {
+                            console.log("[YOMI DEBUG] Ausreichend Torrents gefunden, beende Fallback-Suche.");
+                            break;
+                        }
                     }
                 }
             }
@@ -394,7 +407,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             return keep;
         });
 
-        console.log(`[YOMI DEBUG] Titel-Filter hat ${filterDropCount} Torrents gelöscht.`);
+        console.log(`[YOMI DEBUG] Titel-Filter hat ${filterDropCount} Torrents geloescht.`);
         console.log(`[YOMI DEBUG] Verbleibend nach Titel-Filter: ${torrents.length}`);
 
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
@@ -433,32 +446,30 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
-                const isCached = matchedFile || progRD === 100;
+                const isStremThruCached = filesRD && filesRD.length > 0;
+                const isDownloading = progRD !== undefined && progRD < 100;
                 
                 let streamStatus = "☁️ Download";
                 let uiName = `YOMI [☁️ RD]`;
 
-                if (isCached) {
+                if (isStremThruCached) {
                     uiName = `YOMI [⚡ RD+]`;
                     streamStatus = "⚡ Cached (StremThru)";
-                } else if (progRD !== undefined && progRD < 100) {
+                } else if (isDownloading) {
                     uiName = `YOMI [⏳ ${progRD}% RD]`;
                     streamStatus = `⏳ ${progRD}% Downloading`;
-                } else if (filesTB && filesTB.length > 0) {
-                    uiName = `YOMI [⚡ RD+]`;
-                    streamStatus = "⚡ Cached (Radar)";
                 }
                 
-                if (isCached || isEpMatch) {
+                if (isStremThruCached || isDownloading || isEpMatch) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
                         description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
                         url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, 
-                        behaviorHints: { bingeGroup: (isCached ? "rd_" : "dl_") + t.hash, notWebReady: !isCached }, 
-                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progRD || 0, _seeders: seeders 
+                        behaviorHints: { bingeGroup: (isStremThruCached ? "rd_" : "dl_") + t.hash, notWebReady: !isStremThruCached }, 
+                        _bytes: bytes, _lang: streamLang, _isCached: isStremThruCached, _res: res, _prog: progRD || 0, _seeders: seeders 
                     };
                     
-                    if (isCached && filesRD) {
+                    if (isStremThruCached && filesRD) {
                         const subFiles = filesRD.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
                         if (subFiles.length > 0) {
                             streamPayload.subtitles = subFiles.map(sub => ({
@@ -476,7 +487,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp) : null;
-                const isCached = matchedFile || progTB === 100;
+                const isCached = filesTB && filesTB.length > 0;
+                const isDownloading = progTB !== undefined && progTB < 100;
                 
                 let streamStatus = "☁️ Download";
                 let uiName = `YOMI [☁️ TB]`;
@@ -484,12 +496,12 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (isCached) {
                     uiName = `YOMI [⚡ TB]`;
                     streamStatus = "⚡ Cached";
-                } else if (progTB !== undefined && progTB < 100) {
+                } else if (isDownloading) {
                     uiName = `YOMI [⏳ ${progTB}% TB]`;
                     streamStatus = `⏳ ${progTB}% Downloading`;
                 }
 
-                if (isCached || isEpMatch) {
+                if (isCached || isDownloading || isEpMatch) {
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
                         description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
