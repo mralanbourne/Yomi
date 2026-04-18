@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing)
+// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Smart Size Checks)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -301,6 +301,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         
         let searchTitle = "", requestedEp = 1, aniListIdForFallback = null;
         let validSearchTitles = []; 
+        const isMovie = type === "movie";
         
         const parts = id.split(":");
 
@@ -388,8 +389,21 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         let filterDropCount = 0;
         torrents = torrents.filter(t => {
             const keep = rawSubstringMatch(t.title, validSearchTitles);
-            if (!keep) filterDropCount++;
-            return keep;
+            if (!keep) { filterDropCount++; return false; }
+
+            // ==========================================
+            // 🛡️ SMART TORRENT SIZE FILTER
+            // ==========================================
+            const bytes = parseSizeToBytes(t.size);
+            const isBatch = isSeasonBatch(t.title, 1);
+            
+            // Verwirft False-Positives: 10GB Dateien, die angeblich nur eine Episode sind.
+            if (!isMovie && !isBatch && bytes > 4.5 * 1024 * 1024 * 1024) {
+                filterDropCount++;
+                return false;
+            }
+
+            return true;
         });
 
         console.log(`[YOMI DEBUG] Titel-Filter hat ${filterDropCount} Torrents geloescht.`);
@@ -427,94 +441,100 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
-            // =======================
-            // 🛑 STRICT EPISODE ENFORCEMENT
-            // =======================
             const isEpMatch = yomiIsEpisodeMatch(t.title, requestedEp);
             
             if (!isEpMatch) {
                 epDropCount++;
-                return; // Keine Caches mehr durchlassen, wenn die Ep nicht passt!
+                return; 
             }
 
             // ===============
             // REAL-DEBRID
             // ===============
             if (userConfig.rdKey) {
-                let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
+                let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp, 1, isMovie) : null;
                 const isStremThruCached = filesRD && filesRD.length > 0;
                 const isDownloading = progRD !== undefined && progRD < 100;
                 
-                let streamStatus = "☁️ Download";
-                let uiName = `YOMI [☁️ RD]`;
+                // Falls die Cache-API antwortet, aber die Files intern durch den Size-Filter gefallen sind, droppen!
+                if (isStremThruCached && !matchedFile && !isMovie) {
+                    epDropCount++;
+                } else {
+                    let streamStatus = "☁️ Download";
+                    let uiName = `YOMI [☁️ RD]`;
 
-                if (isStremThruCached) {
-                    uiName = `YOMI [⚡ RD+]`;
-                    streamStatus = "⚡ Cached (StremThru)";
-                } else if (isDownloading) {
-                    uiName = `YOMI [⏳ ${progRD}% RD]`;
-                    streamStatus = `⏳ ${progRD}% Downloading`;
-                }
-                
-                const streamPayload = { 
-                    name: `${uiName}\n🎥 ${res}`, 
-                    description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
-                    url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, 
-                    behaviorHints: { bingeGroup: (isStremThruCached ? "rd_" : "dl_") + t.hash, notWebReady: !isStremThruCached }, 
-                    _bytes: bytes, _lang: streamLang, _isCached: isStremThruCached, _res: res, _prog: progRD || 0, _seeders: seeders 
-                };
-                
-                if (isStremThruCached && filesRD) {
-                    const subFiles = filesRD.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
-                    if (subFiles.length > 0) {
-                        streamPayload.subtitles = subFiles.map(sub => ({
-                            id: String(sub.id),
-                            url: `${BASE_URL}/sub/realdebrid/${userConfig.rdKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
-                            lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
-                        }));
+                    if (isStremThruCached) {
+                        uiName = `YOMI [⚡ RD+]`;
+                        streamStatus = "⚡ Cached (StremThru)";
+                    } else if (isDownloading) {
+                        uiName = `YOMI [⏳ ${progRD}% RD]`;
+                        streamStatus = `⏳ ${progRD}% Downloading`;
                     }
+                    
+                    const streamPayload = { 
+                        name: `${uiName}\n🎥 ${res}`, 
+                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
+                        url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, 
+                        behaviorHints: { bingeGroup: (isStremThruCached ? "rd_" : "dl_") + t.hash, notWebReady: !isStremThruCached }, 
+                        _bytes: bytes, _lang: streamLang, _isCached: isStremThruCached, _res: res, _prog: progRD || 0, _seeders: seeders 
+                    };
+                    
+                    if (isStremThruCached && filesRD) {
+                        const subFiles = filesRD.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
+                        if (subFiles.length > 0) {
+                            streamPayload.subtitles = subFiles.map(sub => ({
+                                id: String(sub.id),
+                                url: `${BASE_URL}/sub/realdebrid/${userConfig.rdKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
+                                lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
+                            }));
+                        }
+                    }
+                    streams.push(streamPayload);
                 }
-                streams.push(streamPayload);
             }
             
             // ===============
             // TORBOX LOGIC
             // ===============
             if (userConfig.tbKey) {
-                let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp) : null;
+                let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp, 1, isMovie) : null;
                 const isCached = filesTB && filesTB.length > 0;
                 const isDownloading = progTB !== undefined && progTB < 100;
                 
-                let streamStatus = "☁️ Download";
-                let uiName = `YOMI [☁️ TB]`;
+                if (isCached && !matchedFile && !isMovie) {
+                    // Prevent pushing false-positives
+                } else {
+                    let streamStatus = "☁️ Download";
+                    let uiName = `YOMI [☁️ TB]`;
 
-                if (isCached) {
-                    uiName = `YOMI [⚡ TB]`;
-                    streamStatus = "⚡ Cached";
-                } else if (isDownloading) {
-                    uiName = `YOMI [⏳ ${progTB}% TB]`;
-                    streamStatus = `⏳ ${progTB}% Downloading`;
-                }
-
-                const streamPayload = { 
-                    name: `${uiName}\n🎥 ${res}`, 
-                    description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
-                    url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, 
-                    behaviorHints: { bingeGroup: (isCached ? "tb_" : "dl_") + t.hash, notWebReady: !isCached }, 
-                    _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0, _seeders: seeders
-                };
-                
-                if (isCached && filesTB) {
-                    const subFiles = filesTB.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
-                    if (subFiles.length > 0) {
-                        streamPayload.subtitles = subFiles.map(sub => ({
-                            id: String(sub.id),
-                            url: `${BASE_URL}/sub/torbox/${userConfig.tbKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
-                            lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
-                        }));
+                    if (isCached) {
+                        uiName = `YOMI [⚡ TB]`;
+                        streamStatus = "⚡ Cached";
+                    } else if (isDownloading) {
+                        uiName = `YOMI [⏳ ${progTB}% TB]`;
+                        streamStatus = `⏳ ${progTB}% Downloading`;
                     }
+
+                    const streamPayload = { 
+                        name: `${uiName}\n🎥 ${res}`, 
+                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
+                        url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, 
+                        behaviorHints: { bingeGroup: (isCached ? "tb_" : "dl_") + t.hash, notWebReady: !isCached }, 
+                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0, _seeders: seeders
+                    };
+                    
+                    if (isCached && filesTB) {
+                        const subFiles = filesTB.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
+                        if (subFiles.length > 0) {
+                            streamPayload.subtitles = subFiles.map(sub => ({
+                                id: String(sub.id),
+                                url: `${BASE_URL}/sub/torbox/${userConfig.tbKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
+                                lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
+                            }));
+                        }
+                    }
+                    streams.push(streamPayload);
                 }
-                streams.push(streamPayload);
             }
         });
 
