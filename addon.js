@@ -1,6 +1,7 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
 // (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Dynamic Meta Extension)
+// Inklusive Anime Offline Database (AOD) Auto-Alias Integration.
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -10,6 +11,7 @@ const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime,
 const { searchSukebeiForHentai, cleanTorrentTitle } = require("./lib/sukebei");
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require("./lib/debrid");
 const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile, isSeasonBatch, verifyTitleMatch } = require("./lib/parser");
+const { getAliasesByAniListId, getAliasesByTitle } = require("./lib/aod");
 
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
@@ -174,7 +176,8 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
         return { metas: metas.map(m => ({ ...m, type: "anime" })), cacheMaxAge: 43200 };
     }
     if (id === "sukebei_search" && extra.search) {
-        const cleanQuery = sanitizeSearchQuery(extra.search);
+        let cleanQuery = sanitizeSearchQuery(extra.search);
+
         const [anilistMetas, sukebeiTorrents] = await Promise.all([
             searchAdultAnime(extra.search), 
             searchSukebeiForHentai(cleanQuery)
@@ -233,13 +236,11 @@ builder.defineMetaHandler(async ({ type, id }) => {
         meta.type = "anime";
         
         let epCount = meta.episodes || 1;
-        // 🛡️ DYNAMIC META EXTENSION: Wenn der Anime 1 oder "Unknown" Episoden hat, scannen wir Sukebei ab.
         if (epCount === 1 || !meta.episodes) {
             try {
                 let sQuery = sanitizeSearchQuery(searchTitle);
                 let torrents = await searchSukebeiForHentai(sQuery);
                 
-                // Nutze nun auch im Meta-Handler den Fallback, um Episoden für ungenaue/lange Namen zu finden
                 if (torrents.length === 0) {
                     const words = sQuery.split(/\s+/);
                     if (words.length >= 3) {
@@ -379,6 +380,18 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (fallbackMeta) {
                 const fallbackTitles = new Set();
                 
+                // ===============
+                // AOD AUTO-ALIASING INJECTION
+                // Zieht alle verifizierten Tracker-Synonyme aus der JSON Map und injiziert sie direkt ins Fallback
+                // ===============
+                const aodAliases = aniListIdForFallback ? getAliasesByAniListId(aniListIdForFallback) : getAliasesByTitle(searchTitle);
+                if (aodAliases && aodAliases.length > 0) {
+                    console.log(`[YOMI DEBUG] ⚡ AOD-Datenbank Treffer! Injeziere ${aodAliases.length} offizielle Synonyme.`);
+                    aodAliases.forEach(alias => {
+                        if (alias.length > 4) fallbackTitles.add(alias);
+                    });
+                }
+
                 if (fallbackMeta.altName && fallbackMeta.altName.length > 4) fallbackTitles.add(fallbackMeta.altName);
                 if (fallbackMeta.synonyms) {
                     fallbackMeta.synonyms.forEach(syn => {
@@ -395,7 +408,10 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (primaryWords.length >= 3 && w3.length > 4) fallbackTitles.add(w3);
                 if (primaryWords.length >= 4 && w4.length > 4) fallbackTitles.add(w4);
                 
-                for (const altTitle of fallbackTitles) {
+                // Limit auf 10 Fallbacks um gigantische Such-Queues zu verhindern
+                const fallbackArr = Array.from(fallbackTitles).slice(0, 10);
+
+                for (const altTitle of fallbackArr) {
                     if (!altTitle || validSearchTitles.includes(altTitle)) continue;
                     validSearchTitles.push(altTitle); 
                     
@@ -417,7 +433,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
         const baseTitles = new Set();
         validSearchTitles.forEach(t => {
-            // 🛡️ EPISODE & SEASON STRIPPING: Extrahiert saubere Titel, sodass verifyTitleMatch flexibel filtern kann
             const stripped = t.replace(/\b(?:\d+(?:st|nd|rd|th)\s+(?:Season|Part|Cour)|Season\s*\d+|S\d+|Part\s*\d+|Cour\s*\d+|Episode\s*\d+|Ep\s*\d+)\b/ig, "")
                               .replace(/第\s*\d+\s*(?:季|期|기|話|话|集)/g, "")
                               .replace(/\s{2,}/g, " ").trim();
@@ -426,6 +441,20 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         const finalValidTitles = Array.from(baseTitles);
 
         console.log(`[YOMI DEBUG] Alle erlaubten Synonyme (inkl. Base-Titel):`, finalValidTitles);
+
+        if (requestedEp === 1) {
+            for (let t of validSearchTitles) {
+                const epMatch = t.match(/(?:Episode|Ep\.|第)\s*(\d+)(?:\s*話)?/i);
+                if (epMatch) {
+                    const parsedOverride = parseInt(epMatch[1], 10);
+                    if (parsedOverride > 1) {
+                        console.log(`[YOMI DEBUG] ⚠️ OVA-Mapping erkannt! Ändere gesuchte Episode von 1 auf ${parsedOverride}`);
+                        requestedEp = parsedOverride;
+                        break;
+                    }
+                }
+            }
+        }
 
         let filterDropCount = 0;
         torrents = torrents.filter(t => {
