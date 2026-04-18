@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Fixed Episode Parsing)
+// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -89,7 +89,7 @@ function extractTags(title) {
 const LANG_REGEX = {
     "GER": /\b(ger|deu|german|deutsch|de-de)\b|(?:^|\[|\()(de)(?:\]|\)|$)/i,
     "FRE": /\b(fre|fra|french|vostfr|vf|fr-fr)\b|(?:^|\[|\()(fr)(?:\]|\)|$)/i,
-    "ITA": /\b(ita|italian|it-it)\b|(?:^|\[|\()(it)(?:\]|\)|$)/i,
+    "ITA": /\b(ita|italian|it-it)\b|(?:^|\[|\()(it)(it)(?:\]|\)|$)/i,
     "SPA": /\b(spa|esp|spanish|es-es|es-mx)\b|(?:^|\[|\()(es)(?:\]|\)|$)/i,
     "RUS": /\b(rus|russian|ru-ru)\b|(?:^|\[|\()(ru)(?:\]|\)|$)/i,
     "POR": /\b(por|pt-br|portuguese|pt-pt)\b|(?:^|\[|\()(pt)(?:\]|\)|$)/i,
@@ -143,9 +143,6 @@ function generateDynamicPoster(title) {
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
 }
 
-//===============
-// RADIKAL EINFACHER RAW-FILTER MIT DEBUGGING
-//===============
 function rawSubstringMatch(torrentTitle, searchTitles) {
     if (!searchTitles || searchTitles.length === 0) return true;
 
@@ -165,9 +162,6 @@ function rawSubstringMatch(torrentTitle, searchTitles) {
     return false;
 }
 
-//===============
-// HENTAI-EPISODEN-FILTER (Leniency für fehlende Episodennummern)
-//===============
 function yomiIsEpisodeMatch(title, requestedEp) {
     if (/batch|complete|all\s+episodes/i.test(title)) return true;
     if (isEpisodeMatch(title, requestedEp)) return true;
@@ -310,9 +304,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         
         const parts = id.split(":");
 
-        // =======================
-        // EPISODEN ID PARSING FIX
-        // =======================
         if (id.startsWith("anilist:")) {
             let payload = parts[1];
             if (payload && payload.includes("-")) {
@@ -362,10 +353,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         let torrents = await searchSukebeiForHentai(searchTitle);
         console.log(`[YOMI DEBUG] Sukebei Raw Results fuer Haupttitel: ${torrents.length}`);
         
-        // =======================
-        // ENHANCED FALLBACK ENGINE
-        // Triggert nun auch bei < 15 Ergebnissen, um zersplitterte Suchergebnisse zu aggregieren
-        // =======================
         if (torrents.length < 15) {
             console.log("[YOMI DEBUG] Starte Universal Fallback Engine zur Erweiterung der Ergebnisse...");
             let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
@@ -375,7 +362,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (fallbackMeta.synonyms) fallbackMeta.synonyms.forEach(syn => fallbackTitles.add(syn));
                 
                 const primaryWords = searchTitle.split(/\s+/);
-                // Erweiterter Split für Hentai Titel, greift Kombinationen wie "Ane wa Yanmama" sicher ab
                 if (primaryWords.length >= 2) fallbackTitles.add(primaryWords.slice(0, 2).join(" "));
                 if (primaryWords.length >= 3) fallbackTitles.add(primaryWords.slice(0, 3).join(" "));
                 if (primaryWords.length >= 4) fallbackTitles.add(primaryWords.slice(0, 4).join(" "));
@@ -387,9 +373,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     const extraTorrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
                     if (extraTorrents.length > 0) {
                         console.log(`[YOMI DEBUG] Zusaetzliche Treffer mit Fallback-Titel: "${altTitle}" -> ${extraTorrents.length} Torrents`);
-                        torrents = torrents.concat(extraTorrents); // Concat statt Overwrite
-                        // Wir stoppen, sobald wir eine solide Base aufgebaut haben, um Cloudflare nicht zu belasten
-                        if (torrents.length >= 30) {
+                        torrents = torrents.concat(extraTorrents); 
+                        if (torrents.length >= 15) {
                             console.log("[YOMI DEBUG] Ausreichend Torrents gefunden, beende Fallback-Suche.");
                             break;
                         }
@@ -442,8 +427,19 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
+            // =======================
+            // 🛑 STRICT EPISODE ENFORCEMENT
+            // =======================
             const isEpMatch = yomiIsEpisodeMatch(t.title, requestedEp);
+            
+            if (!isEpMatch) {
+                epDropCount++;
+                return; // Keine Caches mehr durchlassen, wenn die Ep nicht passt!
+            }
 
+            // ===============
+            // REAL-DEBRID
+            // ===============
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp) : null;
                 const isStremThruCached = filesRD && filesRD.length > 0;
@@ -460,31 +456,30 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     streamStatus = `⏳ ${progRD}% Downloading`;
                 }
                 
-                if (isStremThruCached || isDownloading || isEpMatch) {
-                    const streamPayload = { 
-                        name: `${uiName}\n🎥 ${res}`, 
-                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
-                        url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, 
-                        behaviorHints: { bingeGroup: (isStremThruCached ? "rd_" : "dl_") + t.hash, notWebReady: !isStremThruCached }, 
-                        _bytes: bytes, _lang: streamLang, _isCached: isStremThruCached, _res: res, _prog: progRD || 0, _seeders: seeders 
-                    };
-                    
-                    if (isStremThruCached && filesRD) {
-                        const subFiles = filesRD.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
-                        if (subFiles.length > 0) {
-                            streamPayload.subtitles = subFiles.map(sub => ({
-                                id: String(sub.id),
-                                url: `${BASE_URL}/sub/realdebrid/${userConfig.rdKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
-                                lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
-                            }));
-                        }
+                const streamPayload = { 
+                    name: `${uiName}\n🎥 ${res}`, 
+                    description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
+                    url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, 
+                    behaviorHints: { bingeGroup: (isStremThruCached ? "rd_" : "dl_") + t.hash, notWebReady: !isStremThruCached }, 
+                    _bytes: bytes, _lang: streamLang, _isCached: isStremThruCached, _res: res, _prog: progRD || 0, _seeders: seeders 
+                };
+                
+                if (isStremThruCached && filesRD) {
+                    const subFiles = filesRD.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
+                    if (subFiles.length > 0) {
+                        streamPayload.subtitles = subFiles.map(sub => ({
+                            id: String(sub.id),
+                            url: `${BASE_URL}/sub/realdebrid/${userConfig.rdKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
+                            lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
+                        }));
                     }
-                    streams.push(streamPayload);
-                } else {
-                    epDropCount++;
                 }
+                streams.push(streamPayload);
             }
             
+            // ===============
+            // TORBOX LOGIC
+            // ===============
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp) : null;
                 const isCached = filesTB && filesTB.length > 0;
@@ -501,27 +496,25 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     streamStatus = `⏳ ${progTB}% Downloading`;
                 }
 
-                if (isCached || isDownloading || isEpMatch) {
-                    const streamPayload = { 
-                        name: `${uiName}\n🎥 ${res}`, 
-                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
-                        url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, 
-                        behaviorHints: { bingeGroup: (isCached ? "tb_" : "dl_") + t.hash, notWebReady: !isCached }, 
-                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0, _seeders: seeders
-                    };
-                    
-                    if (isCached && filesTB) {
-                        const subFiles = filesTB.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
-                        if (subFiles.length > 0) {
-                            streamPayload.subtitles = subFiles.map(sub => ({
-                                id: String(sub.id),
-                                url: `${BASE_URL}/sub/torbox/${userConfig.tbKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
-                                lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
-                            }));
-                        }
+                const streamPayload = { 
+                    name: `${uiName}\n🎥 ${res}`, 
+                    description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
+                    url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, 
+                    behaviorHints: { bingeGroup: (isCached ? "tb_" : "dl_") + t.hash, notWebReady: !isCached }, 
+                    _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0, _seeders: seeders
+                };
+                
+                if (isCached && filesTB) {
+                    const subFiles = filesTB.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
+                    if (subFiles.length > 0) {
+                        streamPayload.subtitles = subFiles.map(sub => ({
+                            id: String(sub.id),
+                            url: `${BASE_URL}/sub/torbox/${userConfig.tbKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
+                            lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
+                        }));
                     }
-                    streams.push(streamPayload);
                 }
+                streams.push(streamPayload);
             }
         });
 
