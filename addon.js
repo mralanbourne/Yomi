@@ -439,14 +439,14 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 let uiName = `YOMI [☁️ RD]`;
 
                 if (isCached) {
-                    uiName = `YOMI [⚡ RD]`;
-                    streamStatus = "⚡ Cached";
+                    uiName = `YOMI [⚡ RD+]`;
+                    streamStatus = "⚡ Cached (StremThru)";
                 } else if (progRD !== undefined && progRD < 100) {
                     uiName = `YOMI [⏳ ${progRD}% RD]`;
                     streamStatus = `⏳ ${progRD}% Downloading`;
                 } else if (filesTB && filesTB.length > 0) {
                     uiName = `YOMI [⚡ RD+]`;
-                    streamStatus = "⚡ Fast Download";
+                    streamStatus = "⚡ Cached (Radar)";
                 }
                 
                 if (isCached || isEpMatch) {
