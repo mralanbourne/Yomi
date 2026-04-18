@@ -18,6 +18,10 @@ BASE_URL = BASE_URL.replace(/\/+$/, "");
 
 const INTERNAL_TB_KEY = process.env.INTERNAL_TORBOX_KEY || "";
 
+const KNOWN_ALIASES = {
+    "hamehara": "Harem Hamehara"
+};
+
 function toBase64Safe(str) {
     return Buffer.from(str, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
@@ -177,6 +181,11 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     }
     if (id === "sukebei_search" && extra.search) {
         let cleanQuery = sanitizeSearchQuery(extra.search);
+        
+        const lowerQuery = cleanQuery.toLowerCase();
+        if (KNOWN_ALIASES[lowerQuery]) {
+            cleanQuery = KNOWN_ALIASES[lowerQuery];
+        }
 
         const [anilistMetas, sukebeiTorrents] = await Promise.all([
             searchAdultAnime(extra.search), 
@@ -239,6 +248,12 @@ builder.defineMetaHandler(async ({ type, id }) => {
         if (epCount === 1 || !meta.episodes) {
             try {
                 let sQuery = sanitizeSearchQuery(searchTitle);
+                
+                const lowerQuery = sQuery.toLowerCase();
+                if (KNOWN_ALIASES[lowerQuery]) {
+                    sQuery = KNOWN_ALIASES[lowerQuery];
+                }
+
                 let torrents = await searchSukebeiForHentai(sQuery);
                 
                 if (torrents.length === 0) {
@@ -337,6 +352,11 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             requestedEp = parts.length > 2 ? parseInt(parts[2], 10) : 1;
         }
 
+        const lowerSearchTitle = searchTitle.toLowerCase();
+        if (KNOWN_ALIASES[lowerSearchTitle]) {
+            searchTitle = KNOWN_ALIASES[lowerSearchTitle];
+        }
+
         console.log(`\n[YOMI DEBUG] ===== NEUE SUCHE =====`);
         console.log(`[YOMI DEBUG] ID: ${id} | Episode: ${requestedEp}`);
         console.log(`[YOMI DEBUG] Initialer Such-Titel: "${searchTitle}"`);
@@ -373,62 +393,32 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         
         let torrents = await searchSukebeiForHentai(searchTitle);
         console.log(`[YOMI DEBUG] Sukebei Raw Results fuer Haupttitel: ${torrents.length}`);
+
+        // ===============
+        // AOD AUTO-ALIASING INJECTION (IMMER AUSFÜHREN)
+        // Stellt sicher, dass der Titel-Filter die offiziellen Synonyme IMMER kennt!
+        // ===============
+        let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
+        const officialSynonyms = new Set();
         
-        if (torrents.length < 15) {
-            console.log("[YOMI DEBUG] Starte Universal Fallback Engine zur Erweiterung der Ergebnisse...");
-            let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
-            if (fallbackMeta) {
-                const fallbackTitles = new Set();
-                
-                // ===============
-                // AOD AUTO-ALIASING INJECTION
-                // Zieht alle verifizierten Tracker-Synonyme aus der JSON Map und injiziert sie direkt ins Fallback
-                // ===============
-                const aodAliases = aniListIdForFallback ? getAliasesByAniListId(aniListIdForFallback) : getAliasesByTitle(searchTitle);
-                if (aodAliases && aodAliases.length > 0) {
-                    console.log(`[YOMI DEBUG] ⚡ AOD-Datenbank Treffer! Injeziere ${aodAliases.length} offizielle Synonyme.`);
-                    aodAliases.forEach(alias => {
-                        if (alias.length > 4) fallbackTitles.add(alias);
-                    });
-                }
+        const aodAliases = aniListIdForFallback ? getAliasesByAniListId(aniListIdForFallback) : getAliasesByTitle(searchTitle);
+        if (aodAliases && aodAliases.length > 0) {
+            aodAliases.forEach(alias => {
+                if (alias.length > 3) officialSynonyms.add(alias);
+            });
+        }
 
-                if (fallbackMeta.altName && fallbackMeta.altName.length > 4) fallbackTitles.add(fallbackMeta.altName);
-                if (fallbackMeta.synonyms) {
-                    fallbackMeta.synonyms.forEach(syn => {
-                        if (syn.length > 4) fallbackTitles.add(syn);
-                    });
-                }
-                
-                const primaryWords = searchTitle.split(/\s+/);
-                const w2 = primaryWords.slice(0, 2).join(" ");
-                const w3 = primaryWords.slice(0, 3).join(" ");
-                const w4 = primaryWords.slice(0, 4).join(" ");
-                
-                if (primaryWords.length >= 2 && w2.length > 4) fallbackTitles.add(w2);
-                if (primaryWords.length >= 3 && w3.length > 4) fallbackTitles.add(w3);
-                if (primaryWords.length >= 4 && w4.length > 4) fallbackTitles.add(w4);
-                
-                // Limit auf 10 Fallbacks um gigantische Such-Queues zu verhindern
-                const fallbackArr = Array.from(fallbackTitles).slice(0, 10);
-
-                for (const altTitle of fallbackArr) {
-                    if (!altTitle || validSearchTitles.includes(altTitle)) continue;
-                    validSearchTitles.push(altTitle); 
-                    
-                    let d = extractSeason(altTitle);
-                    if (d && d > 1 && expectedSeason === 1) expectedSeason = d;
-
-                    const extraTorrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
-                    if (extraTorrents.length > 0) {
-                        console.log(`[YOMI DEBUG] Zusaetzliche Treffer mit Fallback-Titel: "${altTitle}" -> ${extraTorrents.length} Torrents`);
-                        torrents = torrents.concat(extraTorrents); 
-                        if (torrents.length >= 15) {
-                            console.log("[YOMI DEBUG] Ausreichend Torrents gefunden, beende Fallback-Suche.");
-                            break;
-                        }
-                    }
-                }
+        if (fallbackMeta) {
+            if (fallbackMeta.altName && fallbackMeta.altName.length > 3) officialSynonyms.add(fallbackMeta.altName);
+            if (fallbackMeta.synonyms) {
+                fallbackMeta.synonyms.forEach(syn => {
+                    if (syn.length > 3) officialSynonyms.add(syn);
+                });
             }
+        }
+        
+        for (const altTitle of officialSynonyms) {
+            if (!validSearchTitles.includes(altTitle)) validSearchTitles.push(altTitle); 
         }
 
         const baseTitles = new Set();
@@ -436,7 +426,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const stripped = t.replace(/\b(?:\d+(?:st|nd|rd|th)\s+(?:Season|Part|Cour)|Season\s*\d+|S\d+|Part\s*\d+|Cour\s*\d+|Episode\s*\d+|Ep\s*\d+)\b/ig, "")
                               .replace(/第\s*\d+\s*(?:季|期|기|話|话|集)/g, "")
                               .replace(/\s{2,}/g, " ").trim();
-            if (stripped.length > 4) baseTitles.add(stripped);
+            if (stripped.length > 3) baseTitles.add(stripped);
         });
         const finalValidTitles = Array.from(baseTitles);
 
@@ -456,13 +446,13 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
 
+        // --- FILTER 1: Haupt-Resultate bereinigen ---
         let filterDropCount = 0;
-        torrents = torrents.filter(t => {
+        let validTorrents = torrents.filter(t => {
             if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) {
                 filterDropCount++;
                 return false;
             }
-
             const keep = verifyTitleMatch(t.title, finalValidTitles);
             if (!keep) { filterDropCount++; return false; }
 
@@ -473,12 +463,59 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 filterDropCount++;
                 return false;
             }
-
             return true;
         });
 
         console.log(`[YOMI DEBUG] Titel-Filter hat ${filterDropCount} Torrents geloescht.`);
-        console.log(`[YOMI DEBUG] Verbleibend nach Titel-Filter: ${torrents.length}`);
+        console.log(`[YOMI DEBUG] Verbleibend nach Titel-Filter: ${validTorrents.length}`);
+
+        // --- FALLBACK NETZWERK SUCHE (Nur wenn wirklich Ergebnisse fehlen) ---
+        if (validTorrents.length < 5) {
+            console.log("[YOMI DEBUG] Zu wenige verifizierte Torrents. Starte Fallback-Netzwerk-Suche...");
+            
+            const fallbackSearchQueries = new Set(officialSynonyms);
+            const primaryWords = searchTitle.split(/\s+/);
+            if (primaryWords.length >= 2) fallbackSearchQueries.add(primaryWords.slice(0, 2).join(" "));
+            if (primaryWords.length >= 3) fallbackSearchQueries.add(primaryWords.slice(0, 3).join(" "));
+            if (primaryWords.length >= 4) fallbackSearchQueries.add(primaryWords.slice(0, 4).join(" "));
+
+            const searchCandidates = Array.from(fallbackSearchQueries)
+                .filter(t => t.length > 4 && !t.includes("Episode") && t.split(/\s+/).length <= 6)
+                .slice(0, 6); // Max 6 um Tracker zu schonen
+
+            for (const altTitle of searchCandidates) {
+                let d = extractSeason(altTitle);
+                if (d && d > 1 && expectedSeason === 1) expectedSeason = d;
+
+                const extraTorrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
+                
+                let extraDropCount = 0;
+                const extraValid = extraTorrents.filter(t => {
+                    if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) return false;
+                    
+                    // Bei Short-Titles temporaer den Short-Title zum Filtern zulassen, da er abgekuerzt ist
+                    const searchSet = finalValidTitles.concat([altTitle]);
+                    const keep = verifyTitleMatch(t.title, searchSet);
+                    if (!keep) { extraDropCount++; return false; }
+                    
+                    const bytes = parseSizeToBytes(t.size);
+                    const isBatch = isSeasonBatch(t.title, expectedSeason);
+                    if (!isMovie && !isBatch && bytes > 4.5 * 1024 * 1024 * 1024) return false;
+                    return true;
+                });
+
+                if (extraValid.length > 0) {
+                    console.log(`[YOMI DEBUG] Zusaetzliche Treffer mit Fallback-Titel: "${altTitle}" -> ${extraValid.length} verifizierte Torrents.`);
+                    validTorrents = validTorrents.concat(extraValid); 
+                    if (validTorrents.length >= 15) {
+                        console.log("[YOMI DEBUG] Ausreichend Torrents gefunden, beende Fallback-Suche.");
+                        break;
+                    }
+                }
+            }
+        }
+
+        torrents = validTorrents;
 
         if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
 
