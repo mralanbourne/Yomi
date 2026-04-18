@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Smart Size Checks)
+// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Smart Size Checks + Batch Sorting)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -437,12 +437,15 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
+            const isBatch = isSeasonBatch(t.title, 1);
             const isEpMatch = yomiIsEpisodeMatch(t.title, requestedEp);
             
             if (!isEpMatch) {
                 epDropCount++;
                 return; 
             }
+
+            const batchStr = isBatch ? " | 📦 Batch" : "";
 
             // ===============
             // REAL-DEBRID
@@ -468,10 +471,10 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
-                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
+                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}${batchStr}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
                         url: BASE_URL + "/resolve/realdebrid/" + userConfig.rdKey + "/" + t.hash + "/" + requestedEp, 
                         behaviorHints: { bingeGroup: (isStremThruCached ? "rd_" : "dl_") + t.hash, notWebReady: !isStremThruCached }, 
-                        _bytes: bytes, _lang: streamLang, _isCached: isStremThruCached, _res: res, _prog: progRD || 0, _seeders: seeders 
+                        _bytes: bytes, _lang: streamLang, _isCached: isStremThruCached, _res: res, _prog: progRD || 0, _seeders: seeders, _isBatch: isBatch 
                     };
                     
                     if (isStremThruCached && filesRD) {
@@ -512,10 +515,10 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
                     const streamPayload = { 
                         name: `${uiName}\n🎥 ${res}`, 
-                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
+                        description: `${flags[streamLang] || "🇬🇧"} | ${streamStatus}${batchStr}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`, 
                         url: BASE_URL + "/resolve/torbox/" + userConfig.tbKey + "/" + t.hash + "/" + requestedEp, 
                         behaviorHints: { bingeGroup: (isCached ? "tb_" : "dl_") + t.hash, notWebReady: !isCached }, 
-                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0, _seeders: seeders
+                        _bytes: bytes, _lang: streamLang, _isCached: isCached, _res: res, _prog: progTB || 0, _seeders: seeders, _isBatch: isBatch
                     };
                     
                     if (isCached && filesTB) {
@@ -555,6 +558,11 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (sA !== -1) return -1; 
                 if (sB !== -1) return 1; 
             } 
+
+            // 📦 BATCH PRIORITIZATION (Respektiert Sprache, überspringt aber Seed-schwache Singles)
+            const aBatch = a._isBatch && (a._seeders > 0 || a._isCached) ? 1 : 0;
+            const bBatch = b._isBatch && (b._seeders > 0 || b._isCached) ? 1 : 0;
+            if (aBatch !== bBatch) return bBatch - aBatch;
             
             if (!a._isCached && !b._isCached) {
                 if (b._seeders !== a._seeders) return b._seeders - a._seeders;
