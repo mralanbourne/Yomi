@@ -9,7 +9,7 @@ const axios = require("axios");
 const { searchAdultAnime, getAnimeMeta, getTrendingAdultAnime, getTopAdultAnime, getLatestAdultAnime, getJikanMeta, fetchEpisodeDetails } = require("./lib/anilist");
 const { searchSukebeiForHentai, cleanTorrentTitle } = require("./lib/sukebei");
 const { checkRD, checkTorbox, getActiveRD, getActiveTorbox } = require("./lib/debrid");
-const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile } = require("./lib/parser");
+const { extractEpisodeNumber, getBatchRange, isEpisodeMatch, selectBestVideoFile, isSeasonBatch } = require("./lib/parser");
 
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
@@ -163,8 +163,8 @@ function rawSubstringMatch(torrentTitle, searchTitles) {
 }
 
 function yomiIsEpisodeMatch(title, requestedEp) {
-    if (/batch|complete|all\s+episodes/i.test(title)) return true;
-    if (isEpisodeMatch(title, requestedEp)) return true;
+    if (isSeasonBatch(title, 1)) return true;
+    if (isEpisodeMatch(title, requestedEp, 1)) return true;
 
     if (requestedEp === 1) {
         const epNum = extractEpisodeNumber(title, 1);
@@ -391,13 +391,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const keep = rawSubstringMatch(t.title, validSearchTitles);
             if (!keep) { filterDropCount++; return false; }
 
-            // ==========================================
-            // 🛡️ SMART TORRENT SIZE FILTER
-            // ==========================================
             const bytes = parseSizeToBytes(t.size);
             const isBatch = isSeasonBatch(t.title, 1);
             
-            // Verwirft False-Positives: 10GB Dateien, die angeblich nur eine Episode sind.
             if (!isMovie && !isBatch && bytes > 4.5 * 1024 * 1024 * 1024) {
                 filterDropCount++;
                 return false;
@@ -456,7 +452,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 const isStremThruCached = filesRD && filesRD.length > 0;
                 const isDownloading = progRD !== undefined && progRD < 100;
                 
-                // Falls die Cache-API antwortet, aber die Files intern durch den Size-Filter gefallen sind, droppen!
                 if (isStremThruCached && !matchedFile && !isMovie) {
                     epDropCount++;
                 } else {
