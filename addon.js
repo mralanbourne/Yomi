@@ -1,7 +1,5 @@
 //===============
-// YOMI STREMIO ADDON - CORE LOGIC
-// (Clean Architecture + Fixed Episode Parsing + Strict Episode Enforcing + Dynamic Meta Extension)
-// Inklusive Anime Offline Database (AOD) Auto-Alias Integration.
+// YOMI STREMIO ADDON - CORE LOGIC (PIPELINE-LOGGING EDITION)
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -15,27 +13,18 @@ const { getAliasesByAniListId, getAliasesByTitle } = require("./lib/aod");
 
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
-
 const INTERNAL_TB_KEY = process.env.INTERNAL_TORBOX_KEY || "";
+const KNOWN_ALIASES = { "hamehara": "Harem Hamehara" };
 
-const KNOWN_ALIASES = {
-    "hamehara": "Harem Hamehara"
-};
-
-function toBase64Safe(str) {
-    return Buffer.from(str, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}
-
-function fromBase64Safe(str) {
-    return Buffer.from(str.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
-}
+function toBase64Safe(str) { return Buffer.from(str, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, ""); }
+function fromBase64Safe(str) { return Buffer.from(str.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); }
 
 const manifest = {
     id: "org.community.yomi",
     version: "9.0.0", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
-    description: "The ultimate Debrid-powered Sukebei gateway. Streams raw, uncompressed Hentai & NSFW Anime directly via Real-Debrid or Torbox.",
+    description: "The ultimate Debrid-powered Sukebei gateway.",
     types: ["anime", "movie", "series"],
     resources: [
         "catalog",
@@ -60,11 +49,8 @@ function parseConfig(config) {
         if (config && config.Yomi) {
             let b64 = config.Yomi.replace(/-/g, "+").replace(/_/g, "/");
             while (b64.length % 4) { b64 += "="; } 
-            const decoded = Buffer.from(b64, "base64").toString("utf8");
-            parsed = JSON.parse(decoded);
-        } else {
-            parsed = config || {};
-        }
+            parsed = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+        } else { parsed = config || {}; }
     } catch (err) {}
     return parsed || {};
 }
@@ -126,11 +112,7 @@ function extractLanguage(title, userLangs = []) {
 
 function sanitizeSearchQuery(title) {
     if (!title) return "";
-    return title.replace(/\(.*?\)/g, "")
-                .replace(/\[.*?\]/g, "")
-                .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]"<>?+|\\・、。「」『』【】［］（）〈〉≪≫《》〔〕…—～〜♥♡★☆♪]/g, " ")
-                .replace(/\s{2,}/g, " ")
-                .trim();
+    return title.replace(/\(.*?\)/g, "").replace(/\[.*?\]/g, "").replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]"<>?+|\\・、。「」『』【】［］（）〈〉≪≫《》〔〕…—～〜♥♡★☆♪]/g, " ").replace(/\s{2,}/g, " ").trim();
 }
 
 function generateDynamicPoster(title) {
@@ -149,53 +131,17 @@ function generateDynamicPoster(title) {
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
 }
 
-function yomiIsEpisodeMatch(title, requestedEp, expectedSeason) {
-    if (isSeasonBatch(title, expectedSeason)) return true;
-    if (isEpisodeMatch(title, requestedEp, expectedSeason)) return true;
-
-    if (requestedEp === 1) {
-        const epNum = extractEpisodeNumber(title, expectedSeason);
-        if (epNum === null || epNum === 1) {
-            return true;
-        }
-    }
-    return false;
-}
-
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
+    // Boilerplate for Catalogs
     const userConfig = parseConfig(config);
-    if (id === "sukebei_latest") {
-        if (userConfig.showLatest === false) return { metas: [] };
-        const metas = await getLatestAdultAnime();
-        return { metas: metas.map(m => ({ ...m, type: "anime" })), cacheMaxAge: 14400 };
-    }
-    if (id === "sukebei_trending") {
-        if (userConfig.showTrending === false) return { metas: [] };
-        const metas = await getTrendingAdultAnime();
-        return { metas: metas.map(m => ({ ...m, type: "anime" })), cacheMaxAge: 43200 };
-    }
-    if (id === "sukebei_top") {
-        if (userConfig.showTop === false) return { metas: [] };
-        const metas = await getTopAdultAnime();
-        return { metas: metas.map(m => ({ ...m, type: "anime" })), cacheMaxAge: 43200 };
-    }
+    if (id === "sukebei_latest") return { metas: (await getLatestAdultAnime()).map(m => ({ ...m, type: "anime" })), cacheMaxAge: 14400 };
+    if (id === "sukebei_trending") return { metas: (await getTrendingAdultAnime()).map(m => ({ ...m, type: "anime" })), cacheMaxAge: 43200 };
+    if (id === "sukebei_top") return { metas: (await getTopAdultAnime()).map(m => ({ ...m, type: "anime" })), cacheMaxAge: 43200 };
     if (id === "sukebei_search" && extra.search) {
         let cleanQuery = sanitizeSearchQuery(extra.search);
-        
         const lowerQuery = cleanQuery.toLowerCase();
-        if (KNOWN_ALIASES[lowerQuery]) {
-            cleanQuery = KNOWN_ALIASES[lowerQuery];
-        }
-
-        const [anilistMetas, sukebeiTorrents] = await Promise.all([
-            searchAdultAnime(extra.search), 
-            searchSukebeiForHentai(cleanQuery)
-        ]);
-        anilistMetas.sort((a, b) => {
-            const dateA = a.released ? new Date(a.released).getTime() : Infinity;
-            const dateB = b.released ? new Date(b.released).getTime() : Infinity;
-            return dateA - dateB;
-        });
+        if (KNOWN_ALIASES[lowerQuery]) cleanQuery = KNOWN_ALIASES[lowerQuery];
+        const [anilistMetas, sukebeiTorrents] = await Promise.all([searchAdultAnime(extra.search), searchSukebeiForHentai(cleanQuery)]);
         const finalMetas = anilistMetas.map(m => { m.type = "anime"; return m; });
         const rawGroups = {};
         sukebeiTorrents.forEach(t => {
@@ -204,10 +150,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
         });
         Object.keys(rawGroups).forEach(cleanName => {
             if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
-                finalMetas.push({ 
-                    id: "sukebei:" + toBase64Safe(cleanName), type: "anime", 
-                    name: cleanName.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(cleanName) 
-                });
+                finalMetas.push({ id: "sukebei:" + toBase64Safe(cleanName), type: "anime", name: cleanName.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(cleanName) });
             }
         });
         return { metas: finalMetas, cacheMaxAge: finalMetas.length === 0 ? 60 : 86400 };
@@ -216,55 +159,34 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
+    // Boilerplate for Meta
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) return Promise.resolve({ meta: null });
     let meta = null, searchTitle = "";
     try {
         if (id.startsWith("anilist:")) {
-            const parts = id.split(":");
-            let aniListId = parts[1];
+            let aniListId = id.split(":")[1];
             const rawMeta = await getAnimeMeta(aniListId);
-            if (rawMeta) {
-                searchTitle = rawMeta.name;
-                meta = { ...rawMeta }; 
-                meta.id = id; 
-            } else {
-                meta = { id: id, type: "anime", name: "Unknown", poster: generateDynamicPoster("Unknown"), baseTime: Date.now(), epMeta: {} };
-            }
+            if (rawMeta) { searchTitle = rawMeta.name; meta = { ...rawMeta, id }; } 
+            else { meta = { id, type: "anime", name: "Unknown", poster: generateDynamicPoster("Unknown"), baseTime: Date.now(), epMeta: {} }; }
         } else if (id.startsWith("sukebei:")) {
-            const parts = id.split(":");
-            searchTitle = fromBase64Safe(parts[1]);
+            searchTitle = fromBase64Safe(id.split(":")[1]);
             let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim();
             const malData = await getJikanMeta(cleanQuery);
-            if (malData) {
-                meta = { id, type: "anime", name: searchTitle.replace(/^\[.*?\]\s*/g, "").trim(), poster: malData.poster || generateDynamicPoster(searchTitle), background: malData.background, description: malData.description, releaseInfo: malData.releaseInfo, released: malData.released, episodes: malData.episodes, baseTime: malData.baseTime, epMeta: {} };
-            } else {
-                meta = { id, type: "anime", name: searchTitle.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(searchTitle), baseTime: Date.now(), epMeta: {} };
-            }
+            if (malData) { meta = { id, type: "anime", name: searchTitle.replace(/^\[.*?\]\s*/g, "").trim(), poster: malData.poster || generateDynamicPoster(searchTitle), background: malData.background, description: malData.description, releaseInfo: malData.releaseInfo, released: malData.released, episodes: malData.episodes, baseTime: malData.baseTime, epMeta: {} }; } 
+            else { meta = { id, type: "anime", name: searchTitle.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(searchTitle), baseTime: Date.now(), epMeta: {} }; }
         }
-        
         meta.type = "anime";
-        
         let epCount = meta.episodes || 1;
         if (epCount === 1 || !meta.episodes) {
             try {
                 let sQuery = sanitizeSearchQuery(searchTitle);
-                
-                const lowerQuery = sQuery.toLowerCase();
-                if (KNOWN_ALIASES[lowerQuery]) {
-                    sQuery = KNOWN_ALIASES[lowerQuery];
-                }
-
+                if (KNOWN_ALIASES[sQuery.toLowerCase()]) sQuery = KNOWN_ALIASES[sQuery.toLowerCase()];
                 let torrents = await searchSukebeiForHentai(sQuery);
-                
                 if (torrents.length === 0) {
                     const words = sQuery.split(/\s+/);
-                    if (words.length >= 3) {
-                        torrents = await searchSukebeiForHentai(words.slice(0, 3).join(" "));
-                    } else if (words.length === 2 && sQuery.length > 4) {
-                        torrents = await searchSukebeiForHentai(sQuery);
-                    }
+                    if (words.length >= 3) torrents = await searchSukebeiForHentai(words.slice(0, 3).join(" "));
+                    else if (words.length === 2 && sQuery.length > 4) torrents = await searchSukebeiForHentai(sQuery);
                 }
-
                 let maxDetected = 1;
                 torrents.forEach(t => {
                     const batch = getBatchRange(t.title);
@@ -292,7 +214,6 @@ builder.defineMetaHandler(async ({ type, id }) => {
                 const weeksBehind = nextAiring.episode - i;
                 finalDate = new Date((nextAiring.airingAt * 1000) - (weeksBehind * 7 * 24 * 60 * 60 * 1000)).toISOString();
             } else { finalDate = new Date(baseTime + (i - 1) * 7 * 24 * 60 * 60 * 1000).toISOString(); }
-            
             videos.push({ id: meta.id + ":" + 1 + ":" + i, title: finalTitle, season: 1, episode: i, released: finalDate, thumbnail: epData.thumbnail || episodeThumbnail });
         }
         meta.videos = videos;
@@ -307,13 +228,15 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
     try {
         const userConfig = parseConfig(config);
         const tbKeyToUse = userConfig.tbKey || INTERNAL_TB_KEY;
-        if (!userConfig.rdKey && !tbKeyToUse) return { streams: [] };
+        if (!userConfig.rdKey && !tbKeyToUse) {
+            console.log(`[PIPELINE] 🛑 ABBRUCH: Weder Real-Debrid noch Torbox Key vorhanden.`);
+            return { streams: [] };
+        }
         
         let searchTitle = "", requestedEp = 1, aniListIdForFallback = null;
         let expectedSeason = 1;
         let validSearchTitles = []; 
         const isMovie = type === "movie";
-        
         const parts = id.split(":");
 
         if (id.startsWith("anilist:")) {
@@ -353,18 +276,13 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         }
 
         const lowerSearchTitle = searchTitle.toLowerCase();
-        if (KNOWN_ALIASES[lowerSearchTitle]) {
-            searchTitle = KNOWN_ALIASES[lowerSearchTitle];
-        }
+        if (KNOWN_ALIASES[lowerSearchTitle]) searchTitle = KNOWN_ALIASES[lowerSearchTitle];
 
-        console.log(`\n[YOMI DEBUG] ===== NEUE SUCHE =====`);
-        console.log(`[YOMI DEBUG] ID: ${id} | Episode: ${requestedEp}`);
-        console.log(`[YOMI DEBUG] Initialer Such-Titel: "${searchTitle}"`);
+        console.log(`\n========== [PIPELINE START] ==========`);
+        console.log(`[PIPELINE] ID: ${id} | Episode: ${requestedEp}`);
+        console.log(`[PIPELINE] Gesuchter Master-Titel: "${searchTitle}"`);
 
-        if (!searchTitle) {
-            console.log(`[YOMI DEBUG] Abbruch: Kein Such-Titel gefunden.`);
-            return { streams: [] };
-        }
+        if (!searchTitle) return { streams: [] };
         validSearchTitles.push(searchTitle);
 
         const extractSeason = (t) => {
@@ -390,31 +308,21 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
             if (detected) expectedSeason = detected;
         }
-        
-        let torrents = await searchSukebeiForHentai(searchTitle);
-        console.log(`[YOMI DEBUG] Sukebei Raw Results fuer Haupttitel: ${torrents.length}`);
 
-        // ===============
-        // AOD AUTO-ALIASING INJECTION (IMMER AUSFÜHREN)
-        // Stellt sicher, dass der Titel-Filter die offiziellen Synonyme IMMER kennt!
-        // ===============
+        // ==========================================
+        // 1. METADATEN & ALIASES LADEN (DIE FILTER-WALL)
+        // ==========================================
         let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
         const officialSynonyms = new Set();
         
         const aodAliases = aniListIdForFallback ? getAliasesByAniListId(aniListIdForFallback) : getAliasesByTitle(searchTitle);
         if (aodAliases && aodAliases.length > 0) {
-            aodAliases.forEach(alias => {
-                if (alias.length > 3) officialSynonyms.add(alias);
-            });
+            aodAliases.forEach(alias => { if (alias.length > 3) officialSynonyms.add(alias); });
         }
 
         if (fallbackMeta) {
             if (fallbackMeta.altName && fallbackMeta.altName.length > 3) officialSynonyms.add(fallbackMeta.altName);
-            if (fallbackMeta.synonyms) {
-                fallbackMeta.synonyms.forEach(syn => {
-                    if (syn.length > 3) officialSynonyms.add(syn);
-                });
-            }
+            if (fallbackMeta.synonyms) fallbackMeta.synonyms.forEach(syn => { if (syn.length > 3) officialSynonyms.add(syn); });
         }
         
         for (const altTitle of officialSynonyms) {
@@ -429,8 +337,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (stripped.length > 3) baseTitles.add(stripped);
         });
         const finalValidTitles = Array.from(baseTitles);
-
-        console.log(`[YOMI DEBUG] Alle erlaubten Synonyme (inkl. Base-Titel):`, finalValidTitles);
+        console.log(`[PIPELINE] Erlaubte Titel im Filter: ${finalValidTitles.length} Stück.`);
 
         if (requestedEp === 1) {
             for (let t of validSearchTitles) {
@@ -438,7 +345,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (epMatch) {
                     const parsedOverride = parseInt(epMatch[1], 10);
                     if (parsedOverride > 1) {
-                        console.log(`[YOMI DEBUG] ⚠️ OVA-Mapping erkannt! Ändere gesuchte Episode von 1 auf ${parsedOverride}`);
+                        console.log(`[PIPELINE] ⚠️ OVA erkannt! Suche intern nach Episode ${parsedOverride} statt 1.`);
                         requestedEp = parsedOverride;
                         break;
                     }
@@ -446,42 +353,42 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
 
-        // --- FILTER 1: Haupt-Resultate bereinigen ---
-        let filterDropCount = 0;
+        // ==========================================
+        // 2. HAUPTSUCHE
+        // ==========================================
+        let torrents = await searchSukebeiForHentai(searchTitle);
+        console.log(`[PIPELINE] Rohe Torrents aus Hauptsuche: ${torrents.length}`);
+
+        // --- FILTER 1: Titelbereinigung ---
+        let dropsByTitle = 0;
+        let dropsBySize = 0;
         let validTorrents = torrents.filter(t => {
-            if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) {
-                filterDropCount++;
-                return false;
-            }
+            if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) { dropsByTitle++; return false; }
+            
             const keep = verifyTitleMatch(t.title, finalValidTitles);
-            if (!keep) { filterDropCount++; return false; }
+            if (!keep) { dropsByTitle++; return false; }
 
             const bytes = parseSizeToBytes(t.size);
             const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
-            
-            if (!isMovie && !isBatch && bytes > 4.5 * 1024 * 1024 * 1024) {
-                filterDropCount++;
-                return false;
-            }
+            if (!isMovie && !isBatch && bytes > 4.5 * 1024 * 1024 * 1024) { dropsBySize++; return false; }
             return true;
         });
 
-        console.log(`[YOMI DEBUG] Titel-Filter hat ${filterDropCount} Torrents geloescht.`);
-        console.log(`[YOMI DEBUG] Verbleibend nach Titel-Filter: ${validTorrents.length}`);
+        console.log(`[PIPELINE] Filter-Check 1 -> Geloescht wg. falschem Titel: ${dropsByTitle} | Geloescht wg. Übergröße: ${dropsBySize}`);
+        console.log(`[PIPELINE] Verbleibend nach Hauptsuche: ${validTorrents.length}`);
 
-        // --- FALLBACK NETZWERK SUCHE (Nur wenn wirklich Ergebnisse fehlen) ---
+        // ==========================================
+        // 3. FALLBACK SUCHE (Wenn nötig)
+        // ==========================================
         if (validTorrents.length < 5) {
-            console.log("[YOMI DEBUG] Zu wenige verifizierte Torrents. Starte Fallback-Netzwerk-Suche...");
+            console.log("[PIPELINE] Zu wenig Treffer. Aktiviere Netzwerk-Fallback mit Aliasen...");
             
             const fallbackSearchQueries = new Set(officialSynonyms);
             const primaryWords = searchTitle.split(/\s+/);
             if (primaryWords.length >= 2) fallbackSearchQueries.add(primaryWords.slice(0, 2).join(" "));
             if (primaryWords.length >= 3) fallbackSearchQueries.add(primaryWords.slice(0, 3).join(" "));
-            if (primaryWords.length >= 4) fallbackSearchQueries.add(primaryWords.slice(0, 4).join(" "));
 
-            const searchCandidates = Array.from(fallbackSearchQueries)
-                .filter(t => t.length > 4 && !t.includes("Episode") && t.split(/\s+/).length <= 6)
-                .slice(0, 6); // Max 6 um Tracker zu schonen
+            const searchCandidates = Array.from(fallbackSearchQueries).filter(t => t.length > 4 && !t.includes("Episode")).slice(0, 4);
 
             for (const altTitle of searchCandidates) {
                 let d = extractSeason(altTitle);
@@ -489,50 +396,45 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
                 const extraTorrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
                 
-                let extraDropCount = 0;
+                let extraDropTitle = 0;
                 const extraValid = extraTorrents.filter(t => {
                     if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) return false;
-                    
-                    // Bei Short-Titles temporaer den Short-Title zum Filtern zulassen, da er abgekuerzt ist
                     const searchSet = finalValidTitles.concat([altTitle]);
-                    const keep = verifyTitleMatch(t.title, searchSet);
-                    if (!keep) { extraDropCount++; return false; }
+                    if (!verifyTitleMatch(t.title, searchSet)) { extraDropTitle++; return false; }
                     
                     const bytes = parseSizeToBytes(t.size);
-                    const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
-                    if (!isMovie && !isBatch && bytes > 4.5 * 1024 * 1024 * 1024) return false;
+                    if (!isMovie && !isSeasonBatch(t.title, expectedSeason, bytes) && bytes > 4.5 * 1024 * 1024 * 1024) return false;
                     return true;
                 });
 
                 if (extraValid.length > 0) {
-                    console.log(`[YOMI DEBUG] Zusaetzliche Treffer mit Fallback-Titel: "${altTitle}" -> ${extraValid.length} verifizierte Torrents.`);
+                    console.log(`[PIPELINE] Fallback "${altTitle}" brachte ${extraValid.length} neue Torrents (verwarf ${extraDropTitle}).`);
                     validTorrents = validTorrents.concat(extraValid); 
-                    if (validTorrents.length >= 15) {
-                        console.log("[YOMI DEBUG] Ausreichend Torrents gefunden, beende Fallback-Suche.");
-                        break;
-                    }
+                    if (validTorrents.length >= 15) break;
                 }
             }
         }
 
         torrents = validTorrents;
+        if (!torrents.length) {
+            console.log(`[PIPELINE] 🛑 Ende: Absolut null Torrents übrig.`);
+            return { streams: [], cacheMaxAge: 60 };
+        }
 
-        if (!torrents.length) return { streams: [], cacheMaxAge: 60 };
-
+        // Deduplizierung
         const uniqueTorrents = new Map();
         torrents.forEach(t => uniqueTorrents.set(t.hash, t));
         torrents = Array.from(uniqueTorrents.values());
-
         const hashes = torrents.map(t => t.hash);
         
-        console.log(`[YOMI DEBUG] Starte Debrid-Cache Prüfung für ${hashes.length} Hashes...`);
+        console.log(`[PIPELINE] Starte Debrid-Abfrage für ${hashes.length} Hashes...`);
         const [rdC, tbC, rdA, tbA] = await Promise.all([
             userConfig.rdKey ? checkRD(hashes, userConfig.rdKey).catch(() => ({})) : {},
             tbKeyToUse ? checkTorbox(hashes, tbKeyToUse).catch(() => ({})) : {},
             userConfig.rdKey ? getActiveRD(userConfig.rdKey).catch(() => ({})) : {},
             userConfig.tbKey ? getActiveTorbox(userConfig.tbKey).catch(() => ({})) : {}
         ]);
-        console.log(`[YOMI DEBUG] Cache Prüfung abgeschlossen.`);
+        console.log(`[PIPELINE] Debrid-Abfrage abgeschlossen.`);
 
         const userLangs = Array.isArray(userConfig.language) ? userConfig.language : [userConfig.language || "ENG"];
         const streams = [];
@@ -550,9 +452,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const seeders = parseInt(t.seeders, 10) || 0;
             
             const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
-            const isEpMatch = yomiIsEpisodeMatch(t.title, requestedEp, expectedSeason);
             
-            if (!isEpMatch) {
+            // --- FILTER 2: Episodenprüfung ---
+            if (!isEpisodeMatch(t.title, requestedEp, expectedSeason)) {
                 epDropCount++;
                 return; 
             }
@@ -562,20 +464,16 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp, expectedSeason, isMovie) : null;
                 const isStremThruCached = filesRD && filesRD.length > 0;
-                const isDownloading = progRD !== undefined && progRD < 100;
                 
                 if (isStremThruCached && !matchedFile && !isMovie) {
-                    epDropCount++;
+                    epDropCount++; // Intern abgelehnt weil Datei im Hash fehlt
                 } else {
                     let streamStatus = "☁️ Download";
                     let uiName = `YOMI [☁️ RD]`;
-
                     if (isStremThruCached) {
-                        uiName = `YOMI [⚡ RD+]`;
-                        streamStatus = "⚡ Cached (StremThru)";
-                    } else if (isDownloading) {
-                        uiName = `YOMI [⏳ ${progRD}% RD]`;
-                        streamStatus = `⏳ ${progRD}% Downloading`;
+                        uiName = `YOMI [⚡ RD+]`; streamStatus = "⚡ Cached (StremThru)";
+                    } else if (progRD !== undefined && progRD < 100) {
+                        uiName = `YOMI [⏳ ${progRD}% RD]`; streamStatus = `⏳ ${progRD}% Downloading`;
                     }
                     
                     const streamPayload = { 
@@ -590,9 +488,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                         const subFiles = filesRD.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
                         if (subFiles.length > 0) {
                             streamPayload.subtitles = subFiles.map(sub => ({
-                                id: String(sub.id),
-                                url: `${BASE_URL}/sub/realdebrid/${userConfig.rdKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
-                                lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
+                                id: String(sub.id), url: `${BASE_URL}/sub/realdebrid/${userConfig.rdKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`, lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
                             }));
                         }
                     }
@@ -603,19 +499,15 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp, expectedSeason, isMovie) : null;
                 const isCached = filesTB && filesTB.length > 0;
-                const isDownloading = progTB !== undefined && progTB < 100;
                 
                 if (isCached && !matchedFile && !isMovie) {
                 } else {
                     let streamStatus = "☁️ Download";
                     let uiName = `YOMI [☁️ TB]`;
-
                     if (isCached) {
-                        uiName = `YOMI [⚡ TB]`;
-                        streamStatus = "⚡ Cached";
-                    } else if (isDownloading) {
-                        uiName = `YOMI [⏳ ${progTB}% TB]`;
-                        streamStatus = `⏳ ${progTB}% Downloading`;
+                        uiName = `YOMI [⚡ TB]`; streamStatus = "⚡ Cached";
+                    } else if (progTB !== undefined && progTB < 100) {
+                        uiName = `YOMI [⏳ ${progTB}% TB]`; streamStatus = `⏳ ${progTB}% Downloading`;
                     }
 
                     const streamPayload = { 
@@ -630,9 +522,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                         const subFiles = filesTB.filter(f => /\.(srt|vtt|ass|ssa)$/i.test(f.name || f.path || ""));
                         if (subFiles.length > 0) {
                             streamPayload.subtitles = subFiles.map(sub => ({
-                                id: String(sub.id),
-                                url: `${BASE_URL}/sub/torbox/${userConfig.tbKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`,
-                                lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
+                                id: String(sub.id), url: `${BASE_URL}/sub/torbox/${userConfig.tbKey}/${t.hash}/${sub.id}?filename=${encodeURIComponent(sub.name || sub.path || "sub.srt")}`, lang: extractLanguage(sub.name || sub.path || "", userLangs) || "ENG"
                             }));
                         }
                     }
@@ -641,42 +531,28 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         });
 
-        console.log(`[YOMI DEBUG] Episoden-Filter hat ${epDropCount} nicht-passende Einträge gelöscht.`);
-        console.log(`[YOMI DEBUG] Finale Streams an Stremio gesendet: ${streams.length}\n`);
+        console.log(`[PIPELINE] Filter-Check 2 -> Geloescht wg. falscher Episode: ${epDropCount}`);
+        console.log(`[PIPELINE] 🎉 Finale Streams an Stremio gesendet: ${streams.length}\n`);
 
         const searchWords = searchTitle.toLowerCase().split(/\s+/);
-
         return { streams: streams.sort((a, b) => { 
-            const aText = a.description.toLowerCase();
-            const bText = b.description.toLowerCase();
-            const aExact = searchWords.every(w => aText.includes(w)) ? 1 : 0;
-            const bExact = searchWords.every(w => bText.includes(w)) ? 1 : 0;
+            const aText = a.description.toLowerCase(); const bText = b.description.toLowerCase();
+            const aExact = searchWords.every(w => aText.includes(w)) ? 1 : 0; const bExact = searchWords.every(w => bText.includes(w)) ? 1 : 0;
             if (aExact !== bExact) return bExact - aExact;
-
             if (a._prog > b._prog) return -1; 
             if (a._isCached !== b._isCached) return b._isCached ? 1 : -1; 
-            
             if (a._lang !== b._lang) { 
-                const sA = userLangs.indexOf(a._lang); 
-                const sB = userLangs.indexOf(b._lang); 
+                const sA = userLangs.indexOf(a._lang); const sB = userLangs.indexOf(b._lang); 
                 if (sA !== -1 && sB !== -1) return sA - sB; 
-                if (sA !== -1) return -1; 
-                if (sB !== -1) return 1; 
+                if (sA !== -1) return -1; if (sB !== -1) return 1; 
             } 
-
-            const aBatch = a._isBatch && (a._seeders > 0 || a._isCached) ? 1 : 0;
-            const bBatch = b._isBatch && (b._seeders > 0 || b._isCached) ? 1 : 0;
+            const aBatch = a._isBatch && (a._seeders > 0 || a._isCached) ? 1 : 0; const bBatch = b._isBatch && (b._seeders > 0 || b._isCached) ? 1 : 0;
             if (aBatch !== bBatch) return bBatch - aBatch;
-            
-            if (!a._isCached && !b._isCached) {
-                if (b._seeders !== a._seeders) return b._seeders - a._seeders;
-            }
-            
+            if (!a._isCached && !b._isCached) { if (b._seeders !== a._seeders) return b._seeders - a._seeders; }
             return b._bytes - a._bytes; 
         }), cacheMaxAge: 3600 };
     } catch (err) { 
-        console.error(`[YOMI DEBUG] FATAL ERROR:`, err.message);
-        return { streams: [] }; 
+        console.error(`[PIPELINE] ❌ FATAL ERROR:`, err.message); return { streams: [] }; 
     }
 });
 
