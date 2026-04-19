@@ -457,7 +457,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (!keep) { filterDropCount++; return false; }
 
             const bytes = parseSizeToBytes(t.size);
-            const isBatch = isSeasonBatch(t.title, expectedSeason);
+            const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
             
             if (!isMovie && !isBatch && bytes > 4.5 * 1024 * 1024 * 1024) {
                 filterDropCount++;
@@ -499,7 +499,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                     if (!keep) { extraDropCount++; return false; }
                     
                     const bytes = parseSizeToBytes(t.size);
-                    const isBatch = isSeasonBatch(t.title, expectedSeason);
+                    const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
                     if (!isMovie && !isBatch && bytes > 4.5 * 1024 * 1024 * 1024) return false;
                     return true;
                 });
@@ -549,7 +549,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
-            const isBatch = isSeasonBatch(t.title, expectedSeason);
+            const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
             const isEpMatch = yomiIsEpisodeMatch(t.title, requestedEp, expectedSeason);
             
             if (!isEpMatch) {
