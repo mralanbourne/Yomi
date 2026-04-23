@@ -8,7 +8,7 @@ const express = require("express");
 const axios = require("axios");
 const path = require("path");
 const { getRouter } = require("stremio-addon-sdk");
-const { addonInterface } = require("./addon");
+const { addonInterface, manifest, parseConfig } = require("./addon");
 const { selectBestVideoFile } = require("./lib/parser");
 
 const app = express();
@@ -53,6 +53,34 @@ app.get("/sukebei-status", async (req, res) => {
 
 app.get("/configure", (req, res) => {
     res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+//===============
+// DYNAMIC MANIFEST INTERCEPTOR
+// Diese Route faengt die Manifest-Anfrage ab und filtert Kataloge.
+//===============
+app.get("/:config?/manifest.json", (req, res) => {
+    let userConfig = {};
+    if (req.params.config) {
+        try {
+            const parsed = JSON.parse(decodeURIComponent(req.params.config));
+            userConfig = parseConfig(parsed);
+        } catch (e) {
+            // Fallback auf leere Config bei fehlerhaftem JSON
+        }
+    }
+
+    const dynamicManifest = JSON.parse(JSON.stringify(manifest));
+    
+    dynamicManifest.catalogs = dynamicManifest.catalogs.filter(cat => {
+        if (cat.id === "sukebei_latest" && userConfig.showLatest === false) return false;
+        if (cat.id === "sukebei_trending" && userConfig.showTrending === false) return false;
+        if (cat.id === "sukebei_top" && userConfig.showTop === false) return false;
+        return true;
+    });
+
+    res.setHeader("Cache-Control", "max-age=86400, public");
+    res.json(dynamicManifest);
 });
 
 //===============
