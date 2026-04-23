@@ -1,6 +1,6 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// Limitierte Fallbacks zur Vermeidung von Queue-Verstopfungen unter Last.
+// Optimized: Absolute Fast-Fail fuer Cinemeta (tt) IDs.
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -22,15 +22,15 @@ function fromBase64Safe(str) { return Buffer.from(str.replace(/-/g, "+").replace
 
 const manifest = {
     id: "org.community.yomi",
-    version: "9.0.0", 
+    version: "9.2.0", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway.",
-    types: ["anime", "movie", "series"],
+    types: ["anime"], 
     resources: [
         "catalog",
-        { name: "meta", types: ["anime", "movie", "series"], idPrefixes: ["anilist:", "sukebei:"] },
-        { name: "stream", types: ["anime", "movie", "series"], idPrefixes: ["anilist:", "sukebei:", "kitsu:", "tt"] }
+        { name: "meta", types: ["anime"], idPrefixes: ["anilist:", "sukebei:"] },
+        { name: "stream", types: ["anime"], idPrefixes: ["anilist:", "sukebei:", "kitsu:"] } 
     ],
     catalogs: [
         { id: "sukebei_latest", type: "anime", name: "Yomi Latest Releases" },
@@ -223,7 +223,11 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id, config }) => {
-    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:") && !id.startsWith("kitsu:") && !id.startsWith("tt")) return Promise.resolve({ streams: [] });
+    // FAST-FAIL: Wenn die ID nicht anilist, sukebei oder kitsu ist (z.B. tt für IMDB), blocken wir hier sofort ab.
+    if (!id.startsWith("anilist:") && !id.startsWith("sukebei:") && !id.startsWith("kitsu:")) {
+        return Promise.resolve({ streams: [] });
+    }
+    
     try {
         const userConfig = parseConfig(config);
         const tbKeyToUse = userConfig.tbKey || INTERNAL_TB_KEY;
@@ -268,10 +272,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 searchTitle = sanitizeSearchQuery(res.data?.meta?.name || "");
             } catch (e) {}
             requestedEp = parts.length > 2 ? parseInt(parts[parts.length - 1], 10) : 1;
-        } else if (id.startsWith("tt")) {
-            let res = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${parts[0]}.json`, { timeout: 4000 }).catch(() => null);
-            searchTitle = sanitizeSearchQuery(res?.data?.meta?.name || "");
-            requestedEp = parts.length > 2 ? parseInt(parts[2], 10) : 1;
         }
 
         const lowerSearchTitle = searchTitle.toLowerCase();
@@ -297,16 +297,14 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             return null;
         };
 
-        if (!id.startsWith("tt")) {
-            let detected = null;
-            for (let s of validSearchTitles) {
-                if (s) {
-                    let d = extractSeason(s);
-                    if (d && d > 1) { detected = d; break; }
-                }
+        let detected = null;
+        for (let s of validSearchTitles) {
+            if (s) {
+                let d = extractSeason(s);
+                if (d && d > 1) { detected = d; break; }
             }
-            if (detected) expectedSeason = detected;
         }
+        if (detected) expectedSeason = detected;
 
         // ==========================================
         // 1. METADATEN & ALIASES LADEN (DIE FILTER-WALL)
@@ -386,7 +384,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (primaryWords.length >= 2) fallbackSearchQueries.add(primaryWords.slice(0, 2).join(" "));
             if (primaryWords.length >= 3) fallbackSearchQueries.add(primaryWords.slice(0, 3).join(" "));
 
-            // EXTREM-DROSSELUNG: Nur die ersten 2 statt 4 Fallbacks abfeuern, um Queue-Spam zu verhindern
             const searchCandidates = Array.from(fallbackSearchQueries).filter(t => t.length > 4 && !t.includes("Episode")).slice(0, 2);
 
             for (const altTitle of searchCandidates) {
