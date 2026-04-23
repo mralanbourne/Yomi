@@ -454,7 +454,18 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
             
             // --- FILTER 2: Episodenprüfung ---
-            if (!isEpisodeMatch(t.title, requestedEp, expectedSeason)) {
+            let episodeValid = isEpisodeMatch(t.title, requestedEp, expectedSeason);
+            
+            // Fallback: Unnummerierte Filme oder Batches fallen bei isEpisodeMatch oft durch,
+            // da extractEpisodeNumber 'null' zurückgibt und 'null === requestedEp' false ist.
+            if (!episodeValid) {
+                const extractedEp = extractEpisodeNumber(t.title, expectedSeason);
+                if (extractedEp === null && (isMovie || isBatch)) {
+                    episodeValid = true;
+                }
+            }
+
+            if (!episodeValid) {
                 epDropCount++;
                 return; 
             }
