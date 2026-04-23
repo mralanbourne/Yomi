@@ -61,10 +61,13 @@ app.get("/configure", (req, res) => {
 //===============
 app.get("/:config?/manifest.json", (req, res) => {
     let userConfig = {};
+    let isConfigured = false;
+
     if (req.params.config) {
         try {
             const parsed = JSON.parse(decodeURIComponent(req.params.config));
             userConfig = parseConfig(parsed);
+            isConfigured = true;
         } catch (e) {
             // Fallback auf leere Config bei fehlerhaftem JSON
         }
@@ -72,6 +75,12 @@ app.get("/:config?/manifest.json", (req, res) => {
 
     const dynamicManifest = JSON.parse(JSON.stringify(manifest));
     
+    // Stremio zwingt den Nutzer ins Setup, solange configurationRequired true ist.
+    // Wenn eine URL-Config vorliegt, heben wir den Zwang auf, damit der Install-Button erscheint.
+    if (isConfigured && dynamicManifest.behaviorHints) {
+        dynamicManifest.behaviorHints.configurationRequired = false;
+    }
+
     dynamicManifest.catalogs = dynamicManifest.catalogs.filter(cat => {
         if (cat.id === "sukebei_latest" && userConfig.showLatest === false) return false;
         if (cat.id === "sukebei_trending" && userConfig.showTrending === false) return false;
