@@ -1,5 +1,6 @@
 //===============
-// YOMI STREMIO ADDON - CORE LOGIC (PIPELINE-LOGGING EDITION)
+// YOMI STREMIO ADDON - CORE LOGIC
+// Limitierte Fallbacks zur Vermeidung von Queue-Verstopfungen unter Last.
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -132,7 +133,6 @@ function generateDynamicPoster(title) {
 }
 
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
-    // Boilerplate for Catalogs
     const userConfig = parseConfig(config);
     if (id === "sukebei_latest") return { metas: (await getLatestAdultAnime()).map(m => ({ ...m, type: "anime" })), cacheMaxAge: 14400 };
     if (id === "sukebei_trending") return { metas: (await getTrendingAdultAnime()).map(m => ({ ...m, type: "anime" })), cacheMaxAge: 43200 };
@@ -159,7 +159,6 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
-    // Boilerplate for Meta
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) return Promise.resolve({ meta: null });
     let meta = null, searchTitle = "";
     try {
@@ -360,8 +359,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         console.log(`[PIPELINE] Rohe Torrents aus Hauptsuche: ${torrents.length}`);
 
         // --- FILTER 1: Titelbereinigung ---
-        let dropsByTitle = 0;
-        let dropsBySize = 0;
+        let dropsByTitle = 0, dropsBySize = 0;
         let validTorrents = torrents.filter(t => {
             if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) { dropsByTitle++; return false; }
             
@@ -388,7 +386,8 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (primaryWords.length >= 2) fallbackSearchQueries.add(primaryWords.slice(0, 2).join(" "));
             if (primaryWords.length >= 3) fallbackSearchQueries.add(primaryWords.slice(0, 3).join(" "));
 
-            const searchCandidates = Array.from(fallbackSearchQueries).filter(t => t.length > 4 && !t.includes("Episode")).slice(0, 4);
+            // EXTREM-DROSSELUNG: Nur die ersten 2 statt 4 Fallbacks abfeuern, um Queue-Spam zu verhindern
+            const searchCandidates = Array.from(fallbackSearchQueries).filter(t => t.length > 4 && !t.includes("Episode")).slice(0, 2);
 
             for (const altTitle of searchCandidates) {
                 let d = extractSeason(altTitle);
@@ -456,8 +455,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             // --- FILTER 2: Episodenprüfung ---
             let episodeValid = isEpisodeMatch(t.title, requestedEp, expectedSeason);
             
-            // Fallback: Unnummerierte Filme oder Batches fallen bei isEpisodeMatch oft durch,
-            // da extractEpisodeNumber 'null' zurückgibt und 'null === requestedEp' false ist.
             if (!episodeValid) {
                 const extractedEp = extractEpisodeNumber(t.title, expectedSeason);
                 if (extractedEp === null && (isMovie || isBatch)) {
@@ -477,7 +474,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 const isStremThruCached = filesRD && filesRD.length > 0;
                 
                 if (isStremThruCached && !matchedFile && !isMovie) {
-                    epDropCount++; // Intern abgelehnt weil Datei im Hash fehlt
+                    epDropCount++; 
                 } else {
                     let streamStatus = "☁️ Download";
                     let uiName = `YOMI [☁️ RD]`;
