@@ -3,6 +3,8 @@ name: Publish Docker Image
 on:
   push:
     branches: [ "main", "master" ]
+  workflow_dispatch:
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 jobs:
@@ -11,7 +13,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    
+     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
