@@ -1,6 +1,7 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
 // Optimized: Absolute Fast-Fail fuer Cinemeta (tt) IDs.
+// P2P Integration: Direkte infoHash Uebergabe an Stremio moeglich.
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -223,7 +224,9 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id, config }) => {
+    //===============
     // FAST-FAIL: Wenn die ID nicht anilist, sukebei oder kitsu ist (z.B. tt für IMDB), blocken wir hier sofort ab.
+    //===============
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:") && !id.startsWith("kitsu:")) {
         return Promise.resolve({ streams: [] });
     }
@@ -231,8 +234,12 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
     try {
         const userConfig = parseConfig(config);
         const tbKeyToUse = userConfig.tbKey || INTERNAL_TB_KEY;
-        if (!userConfig.rdKey && !tbKeyToUse) {
-            console.log(`[PIPELINE] 🛑 ABBRUCH: Weder Real-Debrid noch Torbox Key vorhanden.`);
+        
+        //===============
+        // PRUEFUNG: Haben wir ueberhaupt eine gueltige Stream-Methode? (Debrid oder P2P)
+        //===============
+        if (!userConfig.rdKey && !tbKeyToUse && !userConfig.enableP2P) {
+            console.log(`[PIPELINE] 🛑 ABBRUCH: Weder Debrid-Dienste noch P2P aktiviert.`);
             return { streams: [] };
         }
         
@@ -306,9 +313,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         }
         if (detected) expectedSeason = detected;
 
-        // ==========================================
+        //===============
         // 1. METADATEN & ALIASES LADEN (DIE FILTER-WALL)
-        // ==========================================
+        //===============
         let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
         const officialSynonyms = new Set();
         
@@ -350,13 +357,15 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
 
-        // ==========================================
+        //===============
         // 2. HAUPTSUCHE
-        // ==========================================
+        //===============
         let torrents = await searchSukebeiForHentai(searchTitle);
         console.log(`[PIPELINE] Rohe Torrents aus Hauptsuche: ${torrents.length}`);
 
-        // --- FILTER 1: Titelbereinigung ---
+        //===============
+        // FILTER 1: Titelbereinigung 
+        //===============
         let dropsByTitle = 0, dropsBySize = 0;
         let validTorrents = torrents.filter(t => {
             if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) { dropsByTitle++; return false; }
@@ -373,9 +382,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         console.log(`[PIPELINE] Filter-Check 1 -> Geloescht wg. falschem Titel: ${dropsByTitle} | Geloescht wg. Übergröße: ${dropsBySize}`);
         console.log(`[PIPELINE] Verbleibend nach Hauptsuche: ${validTorrents.length}`);
 
-        // ==========================================
+        //===============
         // 3. FALLBACK SUCHE (Wenn nötig)
-        // ==========================================
+        //===============
         if (validTorrents.length < 5) {
             console.log("[PIPELINE] Zu wenig Treffer. Aktiviere Netzwerk-Fallback mit Aliasen...");
             
@@ -417,7 +426,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             return { streams: [], cacheMaxAge: 60 };
         }
 
+        //===============
         // Deduplizierung
+        //===============
         const uniqueTorrents = new Map();
         torrents.forEach(t => uniqueTorrents.set(t.hash, t));
         torrents = Array.from(uniqueTorrents.values());
@@ -425,10 +436,10 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         
         console.log(`[PIPELINE] Starte Debrid-Abfrage für ${hashes.length} Hashes...`);
         const [rdC, tbC, rdA, tbA] = await Promise.all([
-            userConfig.rdKey ? checkRD(hashes, userConfig.rdKey).catch(() => ({})) : {},
-            tbKeyToUse ? checkTorbox(hashes, tbKeyToUse).catch(() => ({})) : {},
-            userConfig.rdKey ? getActiveRD(userConfig.rdKey).catch(() => ({})) : {},
-            userConfig.tbKey ? getActiveTorbox(userConfig.tbKey).catch(() => ({})) : {}
+            userConfig.rdKey ? checkRD(hashes, userConfig.rdKey).catch(() => ({})) : Promise.resolve({}),
+            tbKeyToUse ? checkTorbox(hashes, tbKeyToUse).catch(() => ({})) : Promise.resolve({}),
+            userConfig.rdKey ? getActiveRD(userConfig.rdKey).catch(() => ({})) : Promise.resolve({}),
+            userConfig.tbKey ? getActiveTorbox(userConfig.tbKey).catch(() => ({})) : Promise.resolve({})
         ]);
         console.log(`[PIPELINE] Debrid-Abfrage abgeschlossen.`);
 
@@ -449,7 +460,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             
             const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
             
-            // --- FILTER 2: Episodenprüfung ---
+            //===============
+            // FILTER 2: Episodenprüfung 
+            //===============
             let episodeValid = isEpisodeMatch(t.title, requestedEp, expectedSeason);
             
             if (!episodeValid) {
@@ -465,6 +478,28 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
 
             const batchStr = isBatch ? " | 📦 Batch" : "";
+
+            //===============
+            // P2P LOGIK (Simple Torrent Injection)
+            //===============
+            if (userConfig.enableP2P) {
+                const p2pName = `YOMI [📡 P2P]\n🎥 ${res}`;
+                const p2pDesc = `${flags[streamLang] || "🇬🇧"} | 📡 P2P (Eigene IP sichtbar!)${batchStr}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`;
+                
+                streams.push({
+                    name: p2pName,
+                    description: p2pDesc,
+                    infoHash: t.hash, // Stremio uebernimmt ab hier den Download lokal
+                    behaviorHints: { bingeGroup: "p2p_" + t.hash },
+                    _bytes: bytes,
+                    _lang: streamLang,
+                    _isCached: false, // P2P ist nie vorab "cached" im Stremio-Sinn
+                    _res: res,
+                    _prog: 0,
+                    _seeders: seeders,
+                    _isBatch: isBatch
+                });
+            }
 
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp, expectedSeason, isMovie) : null;
