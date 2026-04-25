@@ -2,6 +2,7 @@
 // YOMI STREMIO ADDON - CORE LOGIC
 // Optimized: Absolute Fast-Fail fuer Cinemeta (tt) IDs.
 // P2P Integration: Direkte infoHash Uebergabe an Stremio moeglich.
+// Speedup: Tracker-Injection zur extrem schnellen Metadaten-Auflösung in Stremio.
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -480,7 +481,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const batchStr = isBatch ? " | 📦 Batch" : "";
 
             //===============
-            // P2P LOGIK (Simple Torrent Injection)
+            // P2P LOGIK (Mit Tracker-Injection)
             //===============
             if (userConfig.enableP2P) {
                 const p2pName = `YOMI [📡 P2P]\n🎥 ${res}`;
@@ -489,11 +490,18 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 streams.push({
                     name: p2pName,
                     description: p2pDesc,
-                    infoHash: t.hash, // Stremio uebernimmt ab hier den Download lokal
+                    infoHash: t.hash, 
+                    sources: [
+                        "tracker:http://nyaa.tracker.wf:7777/announce",
+                        "tracker:udp://open.stealth.si:80/announce",
+                        "tracker:udp://tracker.opentrackr.org:1337/announce",
+                        "tracker:udp://exodus.desync.com:6969/announce",
+                        "dht:" + t.hash
+                    ],
                     behaviorHints: { bingeGroup: "p2p_" + t.hash },
                     _bytes: bytes,
                     _lang: streamLang,
-                    _isCached: false, // P2P ist nie vorab "cached" im Stremio-Sinn
+                    _isCached: false, 
                     _res: res,
                     _prog: 0,
                     _seeders: seeders,
