@@ -3,6 +3,7 @@
 // Optimized: Absolute Fast-Fail fuer Cinemeta (tt) IDs.
 // P2P Integration: Direkte infoHash Uebergabe an Stremio moeglich.
 // Speedup: Tracker-Injection zur extrem schnellen Metadaten-Auflösung in Stremio.
+// Explicit Resolution Toggles & Uncached Filter
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -24,7 +25,7 @@ function fromBase64Safe(str) { return Buffer.from(str.replace(/-/g, "+").replace
 
 const manifest = {
     id: "org.community.yomi",
-    version: "9.3.1", 
+    version: "9.3.2", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Sukebei gateway. The Biggest Collection of Hentai.",
@@ -141,9 +142,9 @@ function generateDynamicPoster(title) {
 
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     const userConfig = parseConfig(config);
-    if (id === "sukebei_latest") return { metas: applyTitlePreference((await getLatestAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 14400 };
-    if (id === "sukebei_trending") return { metas: applyTitlePreference((await getTrendingAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 43200 };
-    if (id === "sukebei_top") return { metas: applyTitlePreference((await getTopAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 43200 };
+    if (id === "sukebei_latest" && userConfig.showLatest !== false) return { metas: applyTitlePreference((await getLatestAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 14400 };
+    if (id === "sukebei_trending" && userConfig.showTrending !== false) return { metas: applyTitlePreference((await getTrendingAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 43200 };
+    if (id === "sukebei_top" && userConfig.showTop !== false) return { metas: applyTitlePreference((await getTopAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 43200 };
     if (id === "sukebei_search" && extra.search) {
         let cleanQuery = sanitizeSearchQuery(extra.search);
         const lowerQuery = cleanQuery.toLowerCase();
@@ -240,9 +241,6 @@ builder.defineMetaHandler(async ({ type, id, config }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id, config }) => {
-    //===============
-    // FAST-FAIL: Wenn die ID nicht anilist, sukebei oder kitsu ist (z.B. tt für IMDB), blocken wir hier sofort ab.
-    //===============
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:") && !id.startsWith("kitsu:")) {
         return Promise.resolve({ streams: [] });
     }
@@ -251,9 +249,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         const userConfig = parseConfig(config);
         const tbKeyToUse = userConfig.tbKey || INTERNAL_TB_KEY;
         
-        //===============
-        // PRUEFUNG: Haben wir ueberhaupt eine gueltige Stream-Methode? (Debrid oder P2P)
-        //===============
         if (!userConfig.rdKey && !tbKeyToUse && !userConfig.enableP2P) {
             console.log(`[PIPELINE] 🛑 ABBRUCH: Weder Debrid-Dienste noch P2P aktiviert.`);
             return { streams: [] };
@@ -329,9 +324,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         }
         if (detected) expectedSeason = detected;
 
-        //===============
-        // 1. METADATEN & ALIASES LADEN (DIE FILTER-WALL)
-        //===============
         let fallbackMeta = aniListIdForFallback ? await getAnimeMeta(aniListIdForFallback) : null;
         const officialSynonyms = new Set();
         
@@ -373,19 +365,26 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         }
 
-        //===============
-        // 2. HAUPTSUCHE
-        //===============
         let torrents = await searchSukebeiForHentai(searchTitle);
         console.log(`[PIPELINE] Rohe Torrents aus Hauptsuche: ${torrents.length}`);
 
         //===============
-        // FILTER 1: Titelbereinigung 
+        // RESOLUTION SETUP
         //===============
-        let dropsByTitle = 0, dropsBySize = 0;
+        const allowedResolutions = Array.isArray(userConfig.resolutions) && userConfig.resolutions.length > 0 
+            ? userConfig.resolutions 
+            : ["8K", "4K", "2K", "1080p", "720p", "480p", "SD"];
+
+        //===============
+        // FILTER 1: Titelbereinigung & Resolution
+        //===============
+        let dropsByTitle = 0, dropsBySize = 0, dropsByRes = 0;
         let validTorrents = torrents.filter(t => {
             if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) { dropsByTitle++; return false; }
             
+            const { res } = extractTags(t.title);
+            if (!allowedResolutions.includes(res)) { dropsByRes++; return false; }
+
             const keep = verifyTitleMatch(t.title, finalValidTitles);
             if (!keep) { dropsByTitle++; return false; }
 
@@ -395,7 +394,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             return true;
         });
 
-        console.log(`[PIPELINE] Filter-Check 1 -> Geloescht wg. falschem Titel: ${dropsByTitle} | Geloescht wg. Übergröße: ${dropsBySize}`);
+        console.log(`[PIPELINE] Filter-Check 1 -> Gelöscht wg. Titel: ${dropsByTitle} | Größe: ${dropsBySize} | Auflösung: ${dropsByRes}`);
         console.log(`[PIPELINE] Verbleibend nach Hauptsuche: ${validTorrents.length}`);
 
         //===============
@@ -417,9 +416,13 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
                 const extraTorrents = await searchSukebeiForHentai(sanitizeSearchQuery(altTitle));
                 
-                let extraDropTitle = 0;
+                let extraDropTitle = 0, extraDropRes = 0;
                 const extraValid = extraTorrents.filter(t => {
                     if (/\b(?:同人誌|同人CG集|Doujinshi|Manga|Artbook|Pictures|Images|CG集|Novel|Photobook|Cosplay)\b/i.test(t.title)) return false;
+                    
+                    const { res } = extractTags(t.title);
+                    if (!allowedResolutions.includes(res)) { extraDropRes++; return false; }
+
                     const searchSet = finalValidTitles.concat([altTitle]);
                     if (!verifyTitleMatch(t.title, searchSet)) { extraDropTitle++; return false; }
                     
@@ -429,7 +432,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 });
 
                 if (extraValid.length > 0) {
-                    console.log(`[PIPELINE] Fallback "${altTitle}" brachte ${extraValid.length} neue Torrents (verwarf ${extraDropTitle}).`);
+                    console.log(`[PIPELINE] Fallback "${altTitle}" brachte ${extraValid.length} neue Torrents (verwarf ${extraDropTitle} Titel, ${extraDropRes} Auflösungen).`);
                     validTorrents = validTorrents.concat(extraValid); 
                     if (validTorrents.length >= 15) break;
                 }
@@ -442,9 +445,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             return { streams: [], cacheMaxAge: 60 };
         }
 
-        //===============
-        // Deduplizierung
-        //===============
         const uniqueTorrents = new Map();
         torrents.forEach(t => uniqueTorrents.set(t.hash, t));
         torrents = Array.from(uniqueTorrents.values());
@@ -476,11 +476,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             
             const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
             
-            //===============
-            // FILTER 2: Episodenprüfung 
-            //===============
             let episodeValid = isEpisodeMatch(t.title, requestedEp, expectedSeason);
-            
             if (!episodeValid) {
                 const extractedEp = extractEpisodeNumber(t.title, expectedSeason);
                 if (extractedEp === null && (isMovie || isBatch)) {
@@ -495,9 +491,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
             const batchStr = isBatch ? " | 📦 Batch" : "";
 
-            //===============
-            // P2P LOGIK (Mit Tracker-Injection)
-            //===============
             if (userConfig.enableP2P) {
                 const p2pName = `YOMI [📡 P2P]\n🎥 ${res}`;
                 const p2pDesc = `${flags[streamLang] || "🇬🇧"} | 📡 P2P ${batchStr}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`;
@@ -514,13 +507,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                         "dht:" + t.hash
                     ],
                     behaviorHints: { bingeGroup: "p2p_" + t.hash },
-                    _bytes: bytes,
-                    _lang: streamLang,
-                    _isCached: false, 
-                    _res: res,
-                    _prog: 0,
-                    _seeders: seeders,
-                    _isBatch: isBatch
+                    _bytes: bytes, _lang: streamLang, _isCached: false, _res: res, _prog: 0, _seeders: seeders, _isBatch: isBatch
                 });
             }
 
@@ -555,7 +542,10 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                             }));
                         }
                     }
-                    streams.push(streamPayload);
+                    
+                    if (!userConfig.hideUncached || isStremThruCached) {
+                        streams.push(streamPayload);
+                    }
                 }
             }
             
@@ -589,7 +579,10 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                             }));
                         }
                     }
-                    streams.push(streamPayload);
+                    
+                    if (!userConfig.hideUncached || isCached) {
+                        streams.push(streamPayload);
+                    }
                 }
             }
         });
