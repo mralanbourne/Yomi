@@ -58,6 +58,11 @@ function parseConfig(config) {
     return parsed || {};
 }
 
+function applyTitlePreference(metas, userConfig) {
+    if (!userConfig.useEnglishTitles || !metas) return metas;
+    return metas.map(m => ({ ...m, name: m.englishName || m.name }));
+}
+
 function parseSizeToBytes(sizeStr) {
     if (!sizeStr || typeof sizeStr !== "string") return 0;
     const match = sizeStr.match(/([\d.]+)\s*(GB|MB|KB|GiB|MiB|KiB|B)/i);
@@ -136,9 +141,9 @@ function generateDynamicPoster(title) {
 
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     const userConfig = parseConfig(config);
-    if (id === "sukebei_latest") return { metas: (await getLatestAdultAnime()).map(m => ({ ...m, type: "anime" })), cacheMaxAge: 14400 };
-    if (id === "sukebei_trending") return { metas: (await getTrendingAdultAnime()).map(m => ({ ...m, type: "anime" })), cacheMaxAge: 43200 };
-    if (id === "sukebei_top") return { metas: (await getTopAdultAnime()).map(m => ({ ...m, type: "anime" })), cacheMaxAge: 43200 };
+    if (id === "sukebei_latest") return { metas: applyTitlePreference((await getLatestAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 14400 };
+    if (id === "sukebei_trending") return { metas: applyTitlePreference((await getTrendingAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 43200 };
+    if (id === "sukebei_top") return { metas: applyTitlePreference((await getTopAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 43200 };
     if (id === "sukebei_search" && extra.search) {
         let cleanQuery = sanitizeSearchQuery(extra.search);
         const lowerQuery = cleanQuery.toLowerCase();
@@ -155,25 +160,35 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
                 finalMetas.push({ id: "sukebei:" + toBase64Safe(cleanName), type: "anime", name: cleanName.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(cleanName) });
             }
         });
-        return { metas: finalMetas, cacheMaxAge: finalMetas.length === 0 ? 60 : 86400 };
+        return { metas: applyTitlePreference(finalMetas, userConfig), cacheMaxAge: finalMetas.length === 0 ? 60 : 86400 };
     }
     return { metas: [] };
 });
 
-builder.defineMetaHandler(async ({ type, id }) => {
+builder.defineMetaHandler(async ({ type, id, config }) => {
+    const userConfig = parseConfig(config);
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) return Promise.resolve({ meta: null });
     let meta = null, searchTitle = "";
     try {
         if (id.startsWith("anilist:")) {
             let aniListId = id.split(":")[1];
             const rawMeta = await getAnimeMeta(aniListId);
-            if (rawMeta) { searchTitle = rawMeta.name; meta = { ...rawMeta, id }; } 
+            if (rawMeta) { 
+                searchTitle = rawMeta.name; 
+                let clonedMeta = { ...rawMeta, id }; 
+                if (userConfig.useEnglishTitles && clonedMeta.englishName) clonedMeta.name = clonedMeta.englishName;
+                meta = clonedMeta;
+            } 
             else { meta = { id, type: "anime", name: "Unknown", poster: generateDynamicPoster("Unknown"), baseTime: Date.now(), epMeta: {} }; }
         } else if (id.startsWith("sukebei:")) {
             searchTitle = fromBase64Safe(id.split(":")[1]);
             let cleanQuery = searchTitle.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, "").replace(/\(.*?\)/g, "").trim();
             const malData = await getJikanMeta(cleanQuery);
-            if (malData) { meta = { id, type: "anime", name: searchTitle.replace(/^\[.*?\]\s*/g, "").trim(), poster: malData.poster || generateDynamicPoster(searchTitle), background: malData.background, description: malData.description, releaseInfo: malData.releaseInfo, released: malData.released, episodes: malData.episodes, baseTime: malData.baseTime, epMeta: {} }; } 
+            if (malData) { 
+                let clonedMeta = { id, type: "anime", name: malData.name || searchTitle.replace(/^\[.*?\]\s*/g, "").trim(), englishName: malData.englishName, poster: malData.poster || generateDynamicPoster(searchTitle), background: malData.background, description: malData.description, releaseInfo: malData.releaseInfo, released: malData.released, episodes: malData.episodes, baseTime: malData.baseTime, epMeta: {} };
+                if (userConfig.useEnglishTitles && clonedMeta.englishName) clonedMeta.name = clonedMeta.englishName;
+                meta = clonedMeta;
+            } 
             else { meta = { id, type: "anime", name: searchTitle.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(searchTitle), baseTime: Date.now(), epMeta: {} }; }
         }
         meta.type = "anime";
