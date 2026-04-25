@@ -24,7 +24,7 @@ function fromBase64Safe(str) { return Buffer.from(str.replace(/-/g, "+").replace
 
 const manifest = {
     id: "org.community.yomi",
-    version: "9.2.0", 
+    version: "9.3.0", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
     description: "The ultimate Debrid-powered Sukebei gateway.",
@@ -485,7 +485,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             //===============
             if (userConfig.enableP2P) {
                 const p2pName = `YOMI [📡 P2P]\n🎥 ${res}`;
-                const p2pDesc = `${flags[streamLang] || "🇬🇧"} | 📡 P2P (Eigene IP sichtbar!)${batchStr}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`;
+                const p2pDesc = `${flags[streamLang] || "🇬🇧"} | 📡 P2P ${batchStr}\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`;
                 
                 streams.push({
                     name: p2pName,
