@@ -27,7 +27,7 @@ const manifest = {
     version: "9.3.0", 
     name: "Yomi",
     logo: BASE_URL + "/yomi.png", 
-    description: "The ultimate Sukebei gateway.",
+    description: "The ultimate Sukebei gateway. The Biggest Collection of Hentai.",
     types: ["anime"], 
     resources: [
         "catalog",
