@@ -5,15 +5,16 @@
 <h1 align="center">YOMI: Your Forbidden Gateway</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-7.0.0-e91e63.svg?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/version-9.3.0-e91e63.svg?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/Stremio-Addon-8a5a9e?style=for-the-badge&logo=stremio" alt="Stremio Addon">
   <img src="https://img.shields.io/badge/Status-Online-success?style=for-the-badge" alt="Status Online">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License MIT">
   <img src="https://img.shields.io/badge/Infrastructure-VPS_Ready-2496ED?style=for-the-badge&logo=docker" alt="VPS Ready">
+  <img src="https://img.shields.io/badge/P2P-Supported-green?style=for-the-badge&logo=bittorrent" alt="P2P Supported">
 </p>
 
 <p align="center">
-  <strong>The definitive high-performance bridge between Sukebei and Stremio. Access the largest library of uncensored adult anime & Hentai via Real-Debrid or Torbox with advanced episode parsing, a strict 3-phase sorting engine, subtitle injection, and zero server-side tracking.</strong><br />
+  <strong>The definitive high-performance bridge between Sukebei and Stremio. Access the largest library of uncensored adult anime & Hentai via Real-Debrid, Torbox, or Direct P2P BitTorrent with advanced episode parsing, a strict 3-phase sorting engine, subtitle injection, and zero server-side tracking.</strong><br />
   <strong>🍏 Fully Compatible with Stremio Web (Linux / iOS / iPadOS) & AIOStreams 🖤</strong>
 </p>
 
@@ -44,16 +45,19 @@
 > * Yomi is built on a **Stateless Architecture**. Unlike other addons, your sensitive data never touches a database.
 > * **Base64 Config:** Your Debrid keys and Language preferences are stored exclusively in your personal Manifest URL using secure Base64 encoding.
 > * **Direct Resolution:** Stream links are resolved on-the-fly and redirected directly to your player.
+> * **P2P Warning:** If you enable the "Simple P2P" feature, you bypass Debrid services and stream via standard BitTorrent. Your IP address will be visible to the swarm. **A VPN is highly recommended!**
 > * **100% Open Source:** Your security is paramount. Verify the code yourself. Everything is public.
 
 ### 🌙 Quick Start
-1. Open the [Community Instance](https://yomi.ruka.pw) and enter your Real-Debrid and / or Torbox API Key.
-2. Select your **Preferred Languages** (e.g., GER, JPN, ENG) from the setup grid. Order matters!
-3. Choose your catalog preferences (Trending / Top Rated).
-4. Click "Install" or copy your manifest url to add your personalized configuration to Stremio.
-5. Use the global Stremio search. Results will appear under the **"Yomi Search"** catalog.
+1. Open the [Community Instance](https://yomi.ruka.pw).
+2. Enter your Real-Debrid and / or Torbox API Key, **OR** toggle the **"Enable Simple P2P"** option if you do not have a Debrid subscription.
+3. Select your **Preferred Languages** (e.g., GER, JPN, ENG) from the setup grid. Order matters!
+4. Choose your catalog preferences (Trending / Top Rated).
+5. Click "Install" or copy your manifest url to add your personalized configuration to Stremio.
+6. Use the global Stremio search. Results will appear under the **"Yomi Search"** catalog.
 
 ### ✨ Key Features & Next-Gen Engine Upgrades
+* **📡 Simple P2P & Tracker Injection:** Don't have a Debrid service? Yomi can seamlessly hand over pure `infoHash` objects injected with high-availability trackers directly to Stremio's internal WebTorrent engine for blazing-fast peer discovery.
 * **🍏 Apple iOS & Flatpak Ready:** Yomi features a heavily hardened CORS and Preflight (`OPTIONS`) architecture, guaranteeing seamless stream and subtitle loading on strict WebKit browsers (iPhone/iPad Safari) and Linux sandboxes.
 * **🔄 Automated Tracker Failover & Proxy:** Sukebei trackers are often targeted by ISP blocks. Yomi now features an intelligent mirror-rotation engine (nyaa.si, iss.one, etc.) with optional Proxy tunneling to bypass aggressive Cloudflare challenges and DNS bans.
 * **🧠 3-Phase Multi-Pass Sorter:** The stream sorting engine guarantees absolute precision. Streams are strictly cascaded by: **1. Language Priority & Cache Status ➔ 2. Video Resolution (8K down to SD) ➔ 3. File Size**. 
@@ -90,34 +94,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-```
-#### 2. Environment Variables:
-```yaml
-    BASE_URL: REQUIRED. The public URL of your deployment (e.g., https://www.google.com/url?sa=E&source=gmail&q=https://yomi.ruka.pw).
-
-    ROOT_TORBOX_KEY: Optional. Master Torbox API Key utilized for backend cache approximations cause RD is restrictive with their API.
-
-    PORT: Optional. Defaults to 7000.
-
-    SUKEBEI_DOMAIN: Optional. Specify another custom Sukebei mirror.
-
-    PROXY_URL: Optional. Pass traffic through a secure proxy to bypass ISP blocks.
-```
-#### 3. Continuous Deployment
-
-Yomi supports automated updates via GitHub Actions and Watchtower. Simply push to your repository, and your VPS will automatically pull the latest image from GHCR.
-
-</details>
-
-<p align="center">☕ Support</p>
-
-<p align="center">I maintain this instance for the community. If you enjoy unrestricted access to the Sukebei District, consider supporting the development!</p>
-
-<p align="center">
-<a href="https://ko-fi.com/mralanbourne" target="_blank">
-<img src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" height="45" alt="Buy Me a Coffee at ko-fi.com" />
-</a>
-</p>
-<p align="center">
-Made with 🖤 for the Underground Community.
-</p>
