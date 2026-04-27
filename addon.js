@@ -4,7 +4,7 @@
 // P2P Integration: Direkte infoHash Uebergabe an Stremio moeglich.
 // Speedup: Tracker-Injection zur extrem schnellen Metadaten-Auflösung in Stremio.
 // Explicit Resolution Toggles & Uncached Filter
-// NEW: Comprehensive Pan-Asian Censor Heuristics & Priority Sorting
+// NEW: Comprehensive Pan-Asian Censor Heuristics & Fixed Batch Forwarding
 //===============
 
 const { addonBuilder } = require("stremio-addon-sdk");
@@ -89,14 +89,10 @@ function extractTags(title) {
 }
 
 //===============
-// CENSORSHIP HEURISTICS (EXTENDED PAN-ASIAN)
-// Prueft auf Englisch, Japanisch, Chinesisch (Mandarin/Slang) und Koreanisch
+// CENSORSHIP HEURISTICS
 //===============
 function determineCensorshipStatus(title) {
-    // 1. Uncensored Check: Umfasst Slang (步兵), asiatische Lehnwörter (노모) und gängige Tags
     const uncenRegex = /\b(uncensored|decensored|uncen|decen|uncut)\b|無修正|修正なし|モザイク破壊|無修|完全版|无码|無碼|步兵|流出|破解|去马赛克|去馬賽克|解碼|解码|노모|무삭제|\bv[2-9]\b/i;
-    
-    // 2. Censored Check: Klassische Zensur-Begriffe und Mosaik-Indikatoren (Kavallerie, 유모 etc.)
     const cenRegex = /\b(censored|cen)\b|有修正|モザイク|有码|有碼|骑兵|騎兵|打码|打碼|유모|모자이크/i;
 
     if (uncenRegex.test(title)) {
@@ -494,20 +490,20 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const filesRD = rdC[hashLow]; const progRD = rdA[hashLow];
             const filesTB = tbC[hashLow]; const progTB = tbA[hashLow];
             const streamLang = extractLanguage(t.title, userLangs);
-            
-            // Aufruf der neuen Erkennungslogik
             const censorData = determineCensorshipStatus(t.title);
-            
             const { res } = extractTags(t.title);
             const bytes = parseSizeToBytes(t.size);
             const seeders = parseInt(t.seeders, 10) || 0;
             
             const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
-            
             let episodeValid = isEpisodeMatch(t.title, requestedEp, expectedSeason);
-            if (!episodeValid) {
+            
+            // BATCH OVERRIDE: Lässt Batches IMMER für jede Episode durch!
+            if (isBatch) {
+                episodeValid = true;
+            } else if (!episodeValid) {
                 const extractedEp = extractEpisodeNumber(t.title, expectedSeason);
-                if (extractedEp === null && (isMovie || isBatch)) {
+                if (extractedEp === null && isMovie) {
                     episodeValid = true;
                 }
             }
@@ -521,7 +517,6 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
             if (userConfig.enableP2P) {
                 const p2pName = `YOMI [📡 P2P]\n🎥 ${res}`;
-                // Beschreibung injiziert den Censor-Status Tag
                 const p2pDesc = `${flags[streamLang] || "🇬🇧"} | ${censorData.label}${batchStr}\n📡 P2P\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`;
                 
                 streams.push({
@@ -621,13 +616,11 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
         const searchWords = searchTitle.toLowerCase().split(/\s+/);
         
-        // AUTONOME SORTIERUNG: Uncensored wandert automatisch an die Spitze
         return { streams: streams.sort((a, b) => { 
             const aText = a.description.toLowerCase(); const bText = b.description.toLowerCase();
             const aExact = searchWords.every(w => aText.includes(w)) ? 1 : 0; const bExact = searchWords.every(w => bText.includes(w)) ? 1 : 0;
             if (aExact !== bExact) return bExact - aExact;
             
-            // PRIORITY 1: Sortiert Decensored-Tags bedingungslos nach oben
             const aUncen = a._isUncensored ? 1 : 0; const bUncen = b._isUncensored ? 1 : 0;
             if (aUncen !== bUncen) return bUncen - aUncen;
 
