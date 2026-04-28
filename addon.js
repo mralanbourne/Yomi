@@ -1,8 +1,8 @@
 //===============
 // YOMI STREMIO ADDON - CORE LOGIC
-// Optimized: Absolute Fast-Fail fuer Cinemeta (tt) IDs.
-// P2P Integration: Direkte infoHash Uebergabe an Stremio moeglich.
-// Speedup: Tracker-Injection zur extrem schnellen Metadaten-Auflösung in Stremio.
+// Optimized: Absolute Fast-Fail for Cinemeta (tt) IDs.
+// P2P Integration: Direct infoHash transfer to Stremio.
+// Speedup: Tracker-Injection for extremely fast metadata resolution in Stremio.
 // Explicit Resolution Toggles & Uncached Filter
 // NEW: Comprehensive Pan-Asian Censor Heuristics & Fixed Batch Forwarding
 //===============
@@ -21,9 +21,18 @@ BASE_URL = BASE_URL.replace(/\/+$/, "");
 const INTERNAL_TB_KEY = process.env.INTERNAL_TORBOX_KEY || "";
 const KNOWN_ALIASES = { "hamehara": "Harem Hamehara" };
 
+//===============
+// BASE64 UTILITY FUNCTIONS
+// These functions safely encode and decode strings to Base64.
+// They are primarily used for safely passing IDs and JSON configs through Stremio URLs.
+//===============
 function toBase64Safe(str) { return Buffer.from(str, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, ""); }
 function fromBase64Safe(str) { return Buffer.from(str.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); }
 
+//===============
+// ADDON MANIFEST
+// Defines the addon properties, supported types, and available catalogs for Stremio.
+//===============
 const manifest = {
     id: "org.community.yomi",
     version: "9.3.4", 
@@ -48,6 +57,11 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+//===============
+// CONFIGURATION PARSER
+// Decodes the user configuration from the "Yomi" base64 payload.
+// Returns an empty object if parsing fails to avoid crashes.
+//===============
 function parseConfig(config) {
     let parsed = {};
     try {
@@ -60,11 +74,20 @@ function parseConfig(config) {
     return parsed || {};
 }
 
+//===============
+// TITLE PREFERENCE APPLIER
+// Swaps the default title with the English title if the user enabled "useEnglishTitles".
+//===============
 function applyTitlePreference(metas, userConfig) {
     if (!userConfig.useEnglishTitles || !metas) return metas;
     return metas.map(m => ({ ...m, name: m.englishName || m.name }));
 }
 
+//===============
+// SIZE PARSER
+// Converts string-based file sizes into raw bytes for numerical comparison.
+// Returns 0 if the input is invalid or missing.
+//===============
 function parseSizeToBytes(sizeStr) {
     if (!sizeStr || typeof sizeStr !== "string") return 0;
     const match = sizeStr.match(/([\d.]+)\s*(GB|MB|KB|GiB|MiB|KiB|B)/i);
@@ -77,6 +100,11 @@ function parseSizeToBytes(sizeStr) {
     return val;
 }
 
+//===============
+// TAG EXTRACTOR
+// Extracts the video resolution from the torrent title.
+// Defaults to "SD" if no matching resolution tags are found.
+//===============
 function extractTags(title) {
     let res = "SD";
     if (/(4320p|8k|FUHD)/i.test(title)) res = "8K";
@@ -90,6 +118,8 @@ function extractTags(title) {
 
 //===============
 // CENSORSHIP HEURISTICS
+// Determines if a release is uncensored or censored based on Japanese, English, and Chinese keywords.
+// Returns a boolean flag and a formatted label for the UI.
 //===============
 function determineCensorshipStatus(title) {
     const uncenRegex = /\b(uncensored|decensored|uncen|decen|uncut)\b|無修正|修正なし|モザイク破壊|無修|完全版|无码|無碼|步兵|流出|破解|去马赛克|去馬賽克|解碼|解码|노모|무삭제|\bv[2-9]\b/i;
@@ -106,6 +136,10 @@ function determineCensorshipStatus(title) {
     return { isUncensored: false, label: "👀 UNKNOWN / CENSORED" };
 }
 
+//===============
+// LANGUAGE REGEX DEFINITIONS
+// A comprehensive map of regex patterns to identify audio or subtitle languages in the release title.
+//===============
 const LANG_REGEX = {
     "GER": /\b(ger|deu|german|deutsch|de-de)\b|(?:^|\[|\()(de)(?:\]|\)|$)/i,
     "FRE": /\b(fre|fra|french|vostfr|vf|fr-fr)\b|(?:^|\[|\()(fr)(?:\]|\)|$)/i,
@@ -128,6 +162,11 @@ const LANG_REGEX = {
     "MULTI": /(multi|dual|multi-audio|multi-sub)/i
 };
 
+//===============
+// LANGUAGE EXTRACTOR
+// Iterates through the user's preferred languages and returns the first match found in the title.
+// Falls back to "MULTI", "ENG", or "JPN" if no specific match is found.
+//===============
 function extractLanguage(title, userLangs = []) {
     const lower = title.toLowerCase();
     for (let lang of userLangs) {
@@ -139,11 +178,20 @@ function extractLanguage(title, userLangs = []) {
     return "ENG"; 
 }
 
+//===============
+// QUERY SANITIZER
+// Strips unnecessary special characters and brackets from a search query to ensure better API matches.
+//===============
 function sanitizeSearchQuery(title) {
     if (!title) return "";
     return title.replace(/\(.*?\)/g, "").replace(/\[.*?\]/g, "").replace(/[.,\/#!$%\^&\*;:{}=\-_`~()\[\]"<>?+|\\・、。「」『』【】［］（）〈〉≪≫《》〔〕…—～〜♥♡★☆♪]/g, " ").replace(/\s{2,}/g, " ").trim();
 }
 
+//===============
+// DYNAMIC POSTER GENERATOR
+// Creates a fallback poster image using a dummy image service when official metadata is missing.
+// Word-wraps the text to ensure it remains readable.
+//===============
 function generateDynamicPoster(title) {
     let clean = title.replace(/^\[.*?\]\s*/g, "").replace(/\[.*?\]/g, " ").replace(/\(.*?\)/g, " ");
     let safeTitle = clean.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s{2,}/g, " ").substring(0, 30).trim().toUpperCase();
@@ -160,22 +208,30 @@ function generateDynamicPoster(title) {
     return "https://dummyimage.com/600x900/1a1a1a/e91e63.png?text=" + encodeURIComponent(lines.join("\n"));
 }
 
+//===============
+// CATALOG HANDLER
+// Processes requests for the Stremio discover catalogs (Latest, Trending, Top, Search).
+//===============
 builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     const userConfig = parseConfig(config);
     if (id === "sukebei_latest" && userConfig.showLatest !== false) return { metas: applyTitlePreference((await getLatestAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 14400 };
     if (id === "sukebei_trending" && userConfig.showTrending !== false) return { metas: applyTitlePreference((await getTrendingAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 43200 };
     if (id === "sukebei_top" && userConfig.showTop !== false) return { metas: applyTitlePreference((await getTopAdultAnime()).map(m => ({ ...m, type: "anime" })), userConfig), cacheMaxAge: 43200 };
+    
     if (id === "sukebei_search" && extra.search) {
         let cleanQuery = sanitizeSearchQuery(extra.search);
         const lowerQuery = cleanQuery.toLowerCase();
         if (KNOWN_ALIASES[lowerQuery]) cleanQuery = KNOWN_ALIASES[lowerQuery];
+        
         const [anilistMetas, sukebeiTorrents] = await Promise.all([searchAdultAnime(extra.search), searchSukebeiForHentai(cleanQuery)]);
         const finalMetas = anilistMetas.map(m => { m.type = "anime"; return m; });
         const rawGroups = {};
+        
         sukebeiTorrents.forEach(t => {
             const cleanName = cleanTorrentTitle(t.title);
             if (cleanName.length > 2 && !rawGroups[cleanName]) rawGroups[cleanName] = t;
         });
+        
         Object.keys(rawGroups).forEach(cleanName => {
             if (!anilistMetas.some(m => m.name.toLowerCase().includes(cleanName.toLowerCase()))) {
                 finalMetas.push({ id: "sukebei:" + toBase64Safe(cleanName), type: "anime", name: cleanName.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(cleanName) });
@@ -186,6 +242,11 @@ builder.defineCatalogHandler(async ({ type, id, extra, config }) => {
     return { metas: [] };
 });
 
+//===============
+// META HANDLER
+// Processes requests for detailed metadata (episodes, descriptions) when a user clicks on a catalog item.
+// Supports both official AniList IDs and fallback Sukebei base64 queries.
+//===============
 builder.defineMetaHandler(async ({ type, id, config }) => {
     const userConfig = parseConfig(config);
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:")) return Promise.resolve({ meta: null });
@@ -212,8 +273,10 @@ builder.defineMetaHandler(async ({ type, id, config }) => {
             } 
             else { meta = { id, type: "anime", name: searchTitle.replace(/^\[.*?\]\s*/g, "").trim(), poster: generateDynamicPoster(searchTitle), baseTime: Date.now(), epMeta: {} }; }
         }
+        
         meta.type = "anime";
         let epCount = meta.episodes || 1;
+        
         if (epCount === 1 || !meta.episodes) {
             try {
                 let sQuery = sanitizeSearchQuery(searchTitle);
@@ -234,6 +297,7 @@ builder.defineMetaHandler(async ({ type, id, config }) => {
                 if (maxDetected > epCount) epCount = maxDetected;
             } catch(e) {}
         }
+        
         const videos = [];
         const episodeThumbnail = meta.background || meta.poster || "https://dummyimage.com/600x337/1a1a1a/e91e63.png?text=YOMI+EPISODE";
         const jikanEps = meta.idMal ? await fetchEpisodeDetails(meta.idMal) : {};
@@ -260,6 +324,11 @@ builder.defineMetaHandler(async ({ type, id, config }) => {
     }
 });
 
+//===============
+// STREAM HANDLER
+// The core logic that parses IDs, executes the scrape, filters the results by episode, 
+// resolution, and size, and finally checks availability against Debrid providers.
+//===============
 builder.defineStreamHandler(async ({ type, id, config }) => {
     if (!id.startsWith("anilist:") && !id.startsWith("sukebei:") && !id.startsWith("kitsu:")) {
         return Promise.resolve({ streams: [] });
@@ -270,7 +339,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         const tbKeyToUse = userConfig.tbKey || INTERNAL_TB_KEY;
         
         if (!userConfig.rdKey && !tbKeyToUse && !userConfig.enableP2P) {
-            console.log(`[PIPELINE] 🛑 ABBRUCH: Weder Debrid-Dienste noch P2P aktiviert.`);
+            console.log(`[PIPELINE] 🛑 ABORT: Neither Debrid services nor P2P enabled.`);
             return { streams: [] };
         }
         
@@ -317,7 +386,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
         console.log(`\n========== [PIPELINE START] ==========`);
         console.log(`[PIPELINE] ID: ${id} | Episode: ${requestedEp}`);
-        console.log(`[PIPELINE] Gesuchter Master-Titel: "${searchTitle}"`);
+        console.log(`[PIPELINE] Targeted Master Title: "${searchTitle}"`);
 
         if (!searchTitle) return { streams: [] };
         validSearchTitles.push(searchTitle);
@@ -369,7 +438,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             if (stripped.length > 3) baseTitles.add(stripped);
         });
         const finalValidTitles = Array.from(baseTitles);
-        console.log(`[PIPELINE] Erlaubte Titel im Filter: ${finalValidTitles.length} Stück.`);
+        console.log(`[PIPELINE] Allowed titles in filter: ${finalValidTitles.length} items.`);
 
         if (requestedEp === 1) {
             for (let t of validSearchTitles) {
@@ -377,7 +446,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 if (epMatch) {
                     const parsedOverride = parseInt(epMatch[1], 10);
                     if (parsedOverride > 1) {
-                        console.log(`[PIPELINE] ⚠️ OVA erkannt! Suche intern nach Episode ${parsedOverride} statt 1.`);
+                        console.log(`[PIPELINE] ⚠️ OVA detected! Internally searching for Episode ${parsedOverride} instead of 1.`);
                         requestedEp = parsedOverride;
                         break;
                     }
@@ -386,17 +455,19 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         }
 
         let torrents = await searchSukebeiForHentai(searchTitle);
-        console.log(`[PIPELINE] Rohe Torrents aus Hauptsuche: ${torrents.length}`);
+        console.log(`[PIPELINE] Raw Torrents from main search: ${torrents.length}`);
 
         //===============
         // RESOLUTION SETUP
+        // Extracts user-defined allowed resolutions.
         //===============
         const allowedResolutions = Array.isArray(userConfig.resolutions) && userConfig.resolutions.length > 0 
             ? userConfig.resolutions 
             : ["8K", "4K", "2K", "1080p", "720p", "480p", "SD"];
 
         //===============
-        // FILTER 1: Titelbereinigung & Resolution
+        // FILTER 1: Title cleanup & Resolution matching
+        // Drops torrents that are manga, artbooks, wrong resolution, or invalid size.
         //===============
         let dropsByTitle = 0, dropsBySize = 0, dropsByRes = 0;
         let validTorrents = torrents.filter(t => {
@@ -414,14 +485,15 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             return true;
         });
 
-        console.log(`[PIPELINE] Filter-Check 1 -> Gelöscht wg. Titel: ${dropsByTitle} | Größe: ${dropsBySize} | Auflösung: ${dropsByRes}`);
-        console.log(`[PIPELINE] Verbleibend nach Hauptsuche: ${validTorrents.length}`);
+        console.log(`[PIPELINE] Filter-Check 1 -> Dropped due to Title: ${dropsByTitle} | Size: ${dropsBySize} | Resolution: ${dropsByRes}`);
+        console.log(`[PIPELINE] Remaining after main search: ${validTorrents.length}`);
 
         //===============
-        // 3. FALLBACK SUCHE (Wenn nötig)
+        // FALLBACK SEARCH (If necessary)
+        // If the main query yields too few results, it expands the search using synonyms and aliases.
         //===============
         if (validTorrents.length < 5) {
-            console.log("[PIPELINE] Zu wenig Treffer. Aktiviere Netzwerk-Fallback mit Aliasen...");
+            console.log("[PIPELINE] Too few hits. Activating network fallback with aliases...");
             
             const fallbackSearchQueries = new Set(officialSynonyms);
             const primaryWords = searchTitle.split(/\s+/);
@@ -452,7 +524,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 });
 
                 if (extraValid.length > 0) {
-                    console.log(`[PIPELINE] Fallback "${altTitle}" brachte ${extraValid.length} neue Torrents (verwarf ${extraDropTitle} Titel, ${extraDropRes} Auflösungen).`);
+                    console.log(`[PIPELINE] Fallback "${altTitle}" brought ${extraValid.length} new torrents.`);
                     validTorrents = validTorrents.concat(extraValid); 
                     if (validTorrents.length >= 15) break;
                 }
@@ -461,7 +533,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
         torrents = validTorrents;
         if (!torrents.length) {
-            console.log(`[PIPELINE] 🛑 Ende: Absolut null Torrents übrig.`);
+            console.log(`[PIPELINE] 🛑 End: Absolutely zero torrents left.`);
             return { streams: [], cacheMaxAge: 60 };
         }
 
@@ -470,14 +542,14 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
         torrents = Array.from(uniqueTorrents.values());
         const hashes = torrents.map(t => t.hash);
         
-        console.log(`[PIPELINE] Starte Debrid-Abfrage für ${hashes.length} Hashes...`);
+        console.log(`[PIPELINE] Starting Debrid query for ${hashes.length} hashes...`);
         const [rdC, tbC, rdA, tbA] = await Promise.all([
             userConfig.rdKey ? checkRD(hashes, userConfig.rdKey).catch(() => ({})) : Promise.resolve({}),
             tbKeyToUse ? checkTorbox(hashes, tbKeyToUse).catch(() => ({})) : Promise.resolve({}),
             userConfig.rdKey ? getActiveRD(userConfig.rdKey).catch(() => ({})) : Promise.resolve({}),
             userConfig.tbKey ? getActiveTorbox(userConfig.tbKey).catch(() => ({})) : Promise.resolve({})
         ]);
-        console.log(`[PIPELINE] Debrid-Abfrage abgeschlossen.`);
+        console.log(`[PIPELINE] Debrid query completed.`);
 
         const userLangs = Array.isArray(userConfig.language) ? userConfig.language : [userConfig.language || "ENG"];
         const streams = [];
@@ -498,7 +570,7 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             const isBatch = isSeasonBatch(t.title, expectedSeason, bytes);
             let episodeValid = isEpisodeMatch(t.title, requestedEp, expectedSeason);
             
-            // BATCH OVERRIDE: Lässt Batches IMMER für jede Episode durch!
+            // BATCH OVERRIDE: Always allows batches through for every episode!
             if (isBatch) {
                 episodeValid = true;
             } else if (!episodeValid) {
@@ -515,6 +587,10 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
 
             const batchStr = isBatch ? " | 📦 Batch" : "";
 
+            //===============
+            // P2P STREAM GENERATION
+            // Connects directly to torrent swarms using injected trackers.
+            //===============
             if (userConfig.enableP2P) {
                 const p2pName = `YOMI [📡 P2P]\n🎥 ${res}`;
                 const p2pDesc = `${flags[streamLang] || "🇬🇧"} | ${censorData.label}${batchStr}\n📡 P2P\n📄 ${t.title}\n💾 ${t.size} | 👥 ${seeders} Seeds`;
@@ -535,6 +611,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 });
             }
 
+            //===============
+            // REAL-DEBRID STREAM GENERATION
+            //===============
             if (userConfig.rdKey) {
                 let matchedFile = filesRD ? selectBestVideoFile(filesRD, requestedEp, expectedSeason, isMovie) : null;
                 const isStremThruCached = filesRD && filesRD.length > 0;
@@ -573,6 +652,9 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
                 }
             }
             
+            //===============
+            // TORBOX STREAM GENERATION
+            //===============
             if (userConfig.tbKey) {
                 let matchedFile = filesTB ? selectBestVideoFile(filesTB, requestedEp, expectedSeason, isMovie) : null;
                 const isCached = filesTB && filesTB.length > 0;
@@ -611,11 +693,15 @@ builder.defineStreamHandler(async ({ type, id, config }) => {
             }
         });
 
-        console.log(`[PIPELINE] Filter-Check 2 -> Geloescht wg. falscher Episode: ${epDropCount}`);
-        console.log(`[PIPELINE] 🎉 Finale Streams an Stremio gesendet: ${streams.length}\n`);
+        console.log(`[PIPELINE] Filter-Check 2 -> Dropped due to wrong episode: ${epDropCount}`);
+        console.log(`[PIPELINE] 🎉 Final Streams sent to Stremio: ${streams.length}\n`);
 
         const searchWords = searchTitle.toLowerCase().split(/\s+/);
         
+        //===============
+        // STREAM SORTING ALGORITHM
+        // Sorts by exact title match, uncensored status, download progress, cache status, language preference, and file size.
+        //===============
         return { streams: streams.sort((a, b) => { 
             const aText = a.description.toLowerCase(); const bText = b.description.toLowerCase();
             const aExact = searchWords.every(w => aText.includes(w)) ? 1 : 0; const bExact = searchWords.every(w => bText.includes(w)) ? 1 : 0;
