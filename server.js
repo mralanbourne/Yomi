@@ -1,6 +1,7 @@
 //===============
 // YOMI GATEWAY - SERVER CORE
 // (Historical Koyeb Base + Hardened Web Subtitles)
+// Handles the Express routing and Stremio API interfacing.
 //===============
 
 require("dotenv").config();
@@ -14,6 +15,10 @@ const { selectBestVideoFile } = require("./lib/parser");
 const app = express();
 app.use(express.json()); 
 
+//===============
+// CORS HEADERS
+// Enforces broad CORS rules to allow the Stremio Web UI to fetch resources without preflight blocking.
+//===============
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD");
@@ -30,8 +35,13 @@ const port = process.env.PORT || 7000;
 let BASE_URL = process.env.BASE_URL || "http://127.0.0.1:7000";
 BASE_URL = BASE_URL.replace(/\/+$/, "");
 
+// Health check endpoint for container orchestrators
 app.get("/health", (req, res) => res.status(200).json({ status: "alive" }));
 
+//===============
+// SUKEBEI STATUS CHECKER
+// Ping the tracker to ensure it is reachable, caching the state for 5 minutes.
+//===============
 let sukebeiCache = { status: "checking", timestamp: 0 };
 app.get("/sukebei-status", async (req, res) => {
     const now = Date.now();
@@ -51,13 +61,14 @@ app.get("/sukebei-status", async (req, res) => {
     }
 });
 
+// Main Configuration UI routing
 app.get("/configure", (req, res) => {
     res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 //===============
 // DYNAMIC MANIFEST INTERCEPTOR
-// Diese Route faengt die Manifest-Anfrage ab und filtert Kataloge.
+// Intercepts the manifest request to dynamically enable/disable catalogs based on user config.
 //===============
 app.get("/:config?/manifest.json", (req, res) => {
     let userConfig = {};
@@ -69,18 +80,18 @@ app.get("/:config?/manifest.json", (req, res) => {
             userConfig = parseConfig(parsed);
             isConfigured = true;
         } catch (e) {
-            // Fallback auf leere Config bei fehlerhaftem JSON
+            // Fallback to empty config if JSON is invalid
         }
     }
 
     const dynamicManifest = JSON.parse(JSON.stringify(manifest));
     
-    // Stremio zwingt den Nutzer ins Setup, solange configurationRequired true ist.
-    // Wenn eine URL-Config vorliegt, heben wir den Zwang auf, damit der Install-Button erscheint.
+    // If configured via URL, Stremio no longer requires configuration UI
     if (isConfigured && dynamicManifest.behaviorHints) {
         dynamicManifest.behaviorHints.configurationRequired = false;
     }
 
+    // Filter catalogs based on preferences
     dynamicManifest.catalogs = dynamicManifest.catalogs.filter(cat => {
         if (cat.id === "sukebei_latest" && userConfig.showLatest === false) return false;
         if (cat.id === "sukebei_trending" && userConfig.showTrending === false) return false;
@@ -94,6 +105,8 @@ app.get("/:config?/manifest.json", (req, res) => {
 
 //===============
 // SUBTITLE PROXY
+// Securely proxies subtitle files (.srt, .vtt) from Debrid services directly to the Stremio player.
+// Fixes CORS issues inherent to Debrid providers when accessed via Stremio Web.
 //===============
 app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
     const { provider, apiKey, hash, fileId } = req.params;
@@ -108,6 +121,7 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
             let list = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { headers: { Authorization: "Bearer " + apiKey } });
             let torrent = list.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
             
+            // Wait and retry if the torrent isn't immediately found in the account
             if (!torrent) {
                 await new Promise(resolve => setTimeout(resolve, 2500));
                 list = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { headers: { Authorization: "Bearer " + apiKey } });
@@ -125,6 +139,7 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
                     fileName = targetFile.path;
                     let targetLink = null;
                     let linkCounter = 0;
+                    // Match the correct unrestrict link based on the selected file index
                     for (let i = 0; i < info.data.files.length; i++) {
                         if (i === fileIdx) { targetLink = info.data.links[linkCounter]; break; }
                         if (info.data.files[i].selected === 1) linkCounter++;
@@ -148,12 +163,14 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
         }
         
         if (!downloadUrl) return res.status(404).send("Subtitle not found");
+        
         const subResponse = await axios.get(downloadUrl, { responseType: "stream" });
         if (clientAborted) { if (subResponse.data?.destroy) subResponse.data.destroy(); return; }
 
         const ext = fileName.split(".").pop().toLowerCase();
         let finalMime = subResponse.headers["content-type"];
         
+        // Correct MIME types so players can render subtitles properly
         if (!finalMime || finalMime.includes("octet-stream") || finalMime.includes("plain")) {
             if (ext === "vtt") finalMime = "text/vtt";
             else if (ext === "ass" || ext === "ssa") finalMime = "text/x-ssa";
@@ -171,6 +188,7 @@ app.get("/sub/:provider/:apiKey/:hash/:fileId", async (req, res) => {
     } catch (e) { res.status(500).send("Error fetching subtitle data"); }
 });
     
+// Helper functions for placeholder video redirects
 function serveLoadingVideo(req, res) {
     res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.redirect(BASE_URL + "/waiting.mp4");
@@ -183,6 +201,8 @@ function serveArchiveVideo(req, res) {
 
 //===============
 // STREAM RESOLVER
+// Generates the final direct download link for the video file by instructing the Debrid provider 
+// to unrestrict the file path, and then HTTP redirects the Stremio player to it.
 //===============
 app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
     const { provider, apiKey, hash, episode } = req.params;
@@ -194,6 +214,7 @@ app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
             const listRes = await axios.get("https://api.real-debrid.com/rest/1.0/torrents?limit=250", { headers: { Authorization: "Bearer " + apiKey } });
             let torrent = listRes.data.find(t => t.hash.toLowerCase() === hash.toLowerCase());
             
+            // Add torrent if it does not exist in the user's Real-Debrid cloud yet
             if (!torrent) {
                 const add = await axios.post("https://api.real-debrid.com/rest/1.0/torrents/addMagnet", new URLSearchParams({ magnet }), { headers: { Authorization: "Bearer " + apiKey } });
                 torrent = { id: add.data.id };
@@ -206,6 +227,7 @@ app.get("/resolve/:provider/:apiKey/:hash/:episode?", async (req, res) => {
                 return res.status(404).send("Torrent is dead.");
             }
             
+            // Automatically select files if waiting for selection
             if (info.data.status !== "downloaded") {
                 if (info.data.status === "waiting_files_selection") {
                     const selectedIds = info.data.files.filter(f => /\.(mkv|mp4|avi|wmv|flv|webm|m4v|ts|m2ts|mov|ass|srt|ssa|vtt)$/i.test(f.path)).map(f => f.id);
